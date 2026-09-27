@@ -1,0 +1,866 @@
+// Synced from github.com/nipalab/nipa@5757e17 (internal/grpc/proto/server.proto).
+// Imported by daemon.proto for the shared request and response types.
+
+syntax = "proto3";
+
+package greet;
+option go_package = "./pb";
+
+import "google/protobuf/timestamp.proto";
+
+message ProjectContext {
+    string org = 1;
+    string project = 2;
+}
+
+enum FileMode {
+    FILE_MODE_UNSPECIFIED = 0;
+    FILE_MODE_READ_ONLY = 1;
+    FILE_MODE_READ_WRITE = 2;
+    FILE_MODE_EXECUTABLE = 3;
+}
+
+message FileNode {
+    string path = 1;
+    FileMode mode = 2;
+    int64 size_bytes = 3;
+    bool is_binary = 4;
+    repeated string chunk_hashes = 5;
+    string encoding = 6; // raw or zstd; hashes refer to the stored bytes
+}
+
+message TreeManifest {
+    string tree_hash = 1;
+    string path = 2; // Subdirectory path, e.g., "assets/shaders"
+    repeated TreeManifest sub_trees = 3; // Child directory trees
+    repeated FileNode files = 4;
+}
+
+message GetTreeManifestRequest {
+    ProjectContext context = 1;
+    string branch = 2;
+    string path = 3;
+    optional string tree_hash = 4;
+    bool recursive = 5;
+    repeated string paths = 6; // directory prefixes to include; empty = whole tree
+}
+
+message GetTreeManifestResponse {
+    string branch = 1;
+    TreeManifest root_tree = 2;
+}
+
+message PushFile {
+    string path = 1; // repository-relative file path, e.g. "assets/logo.png"
+    FileMode mode = 2;
+    int64 size_bytes = 3;
+    bool is_binary = 4;
+    string file_hash = 5;
+    repeated string chunk_hashes = 6;
+    string encoding = 7; // raw or zstd; hashes refer to the stored bytes
+}
+
+message ChunkRef {
+    string hash = 1; // hex-encoded BLAKE3 hash of data
+    int64 size_bytes = 2; // exact size the signed upload URL accepts
+}
+
+message PresignedChunkUrl {
+    string hash = 1; // hex-encoded BLAKE3 hash of data
+    string url = 2; // signed path relative to the server base URL
+    bool already_stored = 3; // content is already stored; skip the transfer
+}
+
+message GetChunkUploadUrlsRequest {
+    ProjectContext context = 1;
+    repeated ChunkRef chunks = 2;
+    int32 page_size = 3;
+    string page_token = 4;
+}
+
+message GetChunkUploadUrlsResponse {
+    repeated PresignedChunkUrl urls = 1;
+    string next_page_token = 2;
+}
+
+message GetChunkDownloadUrlsRequest {
+    ProjectContext context = 1;
+    repeated string commit_ids = 2; // base36 snow IDs; visible chunks are the union of these trees
+    repeated string paths = 3; // optional path prefixes narrowing the visible chunks
+    repeated string hashes = 4; // hex-encoded BLAKE3 hashes
+    int32 page_size = 5;
+    string page_token = 6;
+}
+
+message GetChunkDownloadUrlsResponse {
+    repeated PresignedChunkUrl urls = 1;
+    string next_page_token = 2;
+}
+
+message ConfirmChunkUploadsRequest {
+    ProjectContext context = 1;
+    repeated string hashes = 2; // hex-encoded BLAKE3 hashes
+}
+
+message ConfirmChunkUploadsResponse {
+    repeated string missing_hashes = 1;
+}
+
+message PushRequest {
+    ProjectContext context = 1;
+    string branch = 2;
+    string base_tree_hash = 3; // tree hash the client is based on, empty for branches without commits
+    string message = 4;
+    repeated PushFile files = 5;
+    repeated string removed_files = 6; // paths removed relative to the base tree
+    optional string parent_2_commit_hash = 7; // second parent for merge commits; empty for normal pushes
+    optional string base_commit_id = 8; // base36 snow ID; preferred over base_tree_hash (sparse/filtered clones)
+}
+
+message PushResponse {
+    string commit_id = 1;
+    string commit_hash = 2;
+    string tree_hash = 3;
+}
+
+message Branch {
+    google.protobuf.Timestamp created_at = 1;
+    google.protobuf.Timestamp updated_at = 2;
+    string id = 3;
+    string name = 4;
+    optional string commit_id = 5;
+    bool is_protected = 6;
+    bool is_default = 7;
+}
+
+message GetListBranchRequest {
+    ProjectContext context = 1;
+    int32 limit = 2;
+    optional google.protobuf.Timestamp last_updated_at = 3;
+    optional string last_id = 4;
+}
+
+message GetListBranchResponse {
+    repeated Branch branches = 1;
+}
+
+message GetBranchRequest {
+    ProjectContext context = 1;
+    string branch_id = 2; // base36 snow ID
+}
+
+message GetBranchByNameRequest {
+    ProjectContext context = 1;
+    string name = 2;
+}
+
+message GetBranchByNameResponse {
+    Branch branch = 1;
+}
+
+message GetDefaultBranchRequest {
+    ProjectContext context = 1;
+}
+
+message GetBranchResponse {
+    Branch branch = 1;
+}
+
+message CreateBranchRequest {
+    ProjectContext context = 1;
+    string name = 2;
+    string from_branch = 3; // branch to fork from; empty to fork from the default branch
+    string from_commit_id = 4; // exact commit to fork from (base36 snow ID); takes precedence over from_commit_hash and from_branch
+    string from_commit_hash = 5; // exact commit to fork from (hex content hash); takes precedence over from_branch
+}
+
+message CreateBranchResponse {
+    Branch branch = 1;
+}
+
+message RenameBranchRequest {
+    ProjectContext context = 1;
+    string name = 2;
+    string new_name = 3;
+}
+
+message RenameBranchResponse {
+    Branch branch = 1;
+}
+
+message DeleteBranchRequest {
+    ProjectContext context = 1;
+    string name = 2;
+}
+
+message DeleteBranchResponse {}
+
+message SetDefaultBranchRequest {
+    ProjectContext context = 1;
+    string name = 2;
+}
+
+message SetDefaultBranchResponse {
+    Branch branch = 1;
+}
+
+message SetBranchProtectionRequest {
+    ProjectContext context = 1;
+    string name = 2;
+    bool is_protected = 3;
+}
+
+message SetBranchProtectionResponse {
+    Branch branch = 1;
+}
+
+message GetMergeBaseRequest {
+    ProjectContext context = 1;
+    string target_branch = 2; // used when target_commit_id is empty
+    string source_branch = 3; // used when source_commit_id is empty
+    optional string target_commit_id = 4; // base36 snow ID; takes precedence over target_branch
+    optional string source_commit_id = 5; // base36 snow ID; takes precedence over source_branch
+}
+
+message GetMergeBaseResponse {
+    string target_branch = 1;
+    string source_branch = 2;
+    string target_commit_id = 3; // base36 snow ID; empty when the branch has no commits
+    string source_commit_id = 4; // base36 snow ID; empty when the branch has no commits
+    string merge_base_commit_id = 5; // base36 snow ID; empty when either head is empty
+    TreeManifest merge_base_tree = 6; // recursive manifest of the merge base tree
+    string target_commit_hash = 7; // hex commit hash; empty when the branch has no commits
+    string source_commit_hash = 8; // hex commit hash; empty when the branch has no commits
+}
+
+message MergeFastForwardRequest {
+    ProjectContext context = 1;
+    string target_branch = 2;
+    string source_branch = 3;
+}
+
+message MergeFastForwardResponse {
+    Branch branch = 1; // the target branch after the head moved to the source head
+    string moved_to_commit_id = 2; // base36 snow ID of the source head the target now points at
+}
+
+message CommitLogEntry {
+    string commit_id = 1; // base36 snow ID
+    string commit_hash = 2; // hex-encoded BLAKE3 content hash
+    optional string parent_1_id = 3; // base36 snow ID; empty for a root commit
+    optional string parent_2_id = 4; // base36 snow ID; set for merge commits
+    string author_name = 5;
+    string author_email = 6;
+    string message = 7;
+    google.protobuf.Timestamp created_at = 8;
+}
+
+message GetCommitLogRequest {
+    ProjectContext context = 1;
+    string branch = 2; // empty to use the default branch
+    optional string start_commit_id = 3; // base36 snow ID; empty to start from the branch head
+    int32 limit = 4;
+}
+
+message GetCommitLogResponse {
+    string branch = 1;
+    repeated CommitLogEntry commits = 2;
+}
+
+message CommitDetail {
+    string commit_id = 1; // base36 snow ID
+    string commit_hash = 2; // hex-encoded BLAKE3 content hash
+    string tree_hash = 3; // hex-encoded root tree hash
+    optional string parent_1_id = 4; // base36 snow ID; empty for a root commit
+    optional string parent_2_id = 5; // base36 snow ID; set for merge commits
+    string message = 6;
+    google.protobuf.Timestamp created_at = 7;
+}
+
+message GetCommitRequest {
+    ProjectContext context = 1;
+    string commit_id = 2; // base36 snow ID
+}
+
+message GetCommitResponse {
+    CommitDetail commit = 1;
+    TreeManifest root_tree = 2; // recursive manifest of the commit tree
+}
+
+message CommitWalkEntry {
+    string commit_id = 1; // base36 snow ID
+    string commit_hash = 2; // hex-encoded BLAKE3 content hash
+    optional string parent_1_id = 3; // base36 snow ID; empty for a root commit
+    optional string parent_2_id = 4; // base36 snow ID; set for merge commits
+    string message = 5;
+    google.protobuf.Timestamp created_at = 6;
+}
+
+message WalkCommitsRequest {
+    ProjectContext context = 1;
+    string start_commit_id = 2; // base36 snow ID; walk starts here (inclusive)
+    optional string stop_commit_id = 3; // base36 snow ID; exclusive boundary
+    int32 limit = 4;
+}
+
+message WalkCommitsResponse {
+    repeated CommitWalkEntry commits = 1; // newest first
+}
+
+message LoginUsernamePasswordRequest {
+    string username = 1;
+    string password = 2;
+}
+
+message LoginWithRefreshRequest {
+    string refresh_token = 1;
+}
+
+message LoginResponse {
+    string access_token = 1;
+    string refresh_token = 2;
+    int32 expires_in = 3;
+}
+
+message PermissionEntry {
+    string path_prefix = 1;
+    uint64 permission = 2; // bitmask: 1=read, 2=write, 4=lock, 65536=admin
+}
+
+message PBACRuleDetail {
+    int64 id = 1;
+    optional string user_id = 2; // base36 snow ID; exactly one of user_id/group_id
+    optional string group_id = 3; // base36 snow ID
+    string org_id = 4; // base36 snow ID
+    optional string project_id = 5; // base36 snow ID; empty = every project in the org
+    string path_prefix = 6;
+    uint64 permission = 7;
+    google.protobuf.Timestamp created_at = 8;
+}
+
+message CreatePBACRuleRequest {
+    ProjectContext context = 1;
+    optional string user_id = 2; // base36 snow ID
+    optional string group_id = 3; // base36 snow ID
+    string path_prefix = 4;
+    uint64 permission = 5;
+}
+
+message CreatePBACRuleResponse {
+    PBACRuleDetail rule = 1;
+}
+
+message ListPBACRulesRequest {
+    ProjectContext context = 1;
+}
+
+message ListPBACRulesResponse {
+    repeated PBACRuleDetail rules = 1;
+}
+
+message DeletePBACRuleRequest {
+    ProjectContext context = 1;
+    int64 rule_id = 2;
+}
+
+message DeletePBACRuleResponse {}
+
+message ListProjectPathPermissionsRequest {
+    ProjectContext context = 1;
+}
+
+message ListProjectPathPermissionsResponse {
+    repeated PermissionEntry permissions = 1;
+}
+
+message SetProjectPathPermissionRequest {
+    ProjectContext context = 1;
+    string path_prefix = 2;
+    uint64 permission = 3;
+}
+
+message SetProjectPathPermissionResponse {
+    PermissionEntry permission = 1;
+}
+
+message DeleteProjectPathPermissionRequest {
+    ProjectContext context = 1;
+    string path_prefix = 2;
+}
+
+message DeleteProjectPathPermissionResponse {}
+
+message GetMyPermissionsRequest {
+    ProjectContext context = 1;
+}
+
+message GetMyPermissionsResponse {
+    uint64 project_permission = 1;
+    repeated PermissionEntry rules = 2; // effective rules for the caller
+    repeated PermissionEntry defaults = 3; // project path defaults
+}
+
+message GroupDetail {
+    string id = 1; // base36 snow ID
+    string org_id = 2; // base36 snow ID
+    string name = 3;
+    string description = 4;
+}
+
+message CreateGroupRequest {
+    string org = 1;
+    string name = 2;
+    string description = 3;
+}
+
+message CreateGroupResponse {
+    GroupDetail group = 1;
+}
+
+message ListGroupsRequest {
+    string org = 1;
+}
+
+message ListGroupsResponse {
+    repeated GroupDetail groups = 1;
+}
+
+message AddGroupMemberRequest {
+    string org = 1;
+    string group_id = 2; // base36 snow ID
+    string user_id = 3; // base36 snow ID
+}
+
+message AddGroupMemberResponse {}
+
+message RemoveGroupMemberRequest {
+    string org = 1;
+    string group_id = 2; // base36 snow ID
+    string user_id = 3; // base36 snow ID
+}
+
+message RemoveGroupMemberResponse {}
+
+message MergeabilityDetail {
+    string status = 1; // mergeable, behind_target, up_to_date, invalid, or the request status once terminal
+    optional string source_commit_id = 2; // base36 snow ID
+    optional string target_commit_id = 3; // base36 snow ID
+    optional string merge_base_commit_id = 4; // base36 snow ID
+}
+
+message MergeRequestDetail {
+    string id = 1; // base36 snow ID
+    int64 number = 2; // sequential per-project number
+    string project_id = 3; // base36 snow ID
+    string source_branch = 4;
+    string target_branch = 5;
+    string title = 6;
+    string description = 7;
+    string status = 8; // open, merged, closed
+    optional string merge_commit_id = 9; // base36 snow ID
+    optional string merge_base_commit_id = 10; // base36 snow ID
+    string created_by = 11; // base36 snow ID
+    google.protobuf.Timestamp created_at = 12;
+    google.protobuf.Timestamp updated_at = 13;
+}
+
+message CreateMergeRequestRequest {
+    ProjectContext context = 1;
+    string title = 2;
+    string description = 3;
+    string source_branch = 4;
+    string target_branch = 5;
+}
+
+message CreateMergeRequestResponse {
+    MergeRequestDetail merge_request = 1;
+}
+
+message UpdateMergeRequestRequest {
+    ProjectContext context = 1;
+    int64 number = 2; // sequential per-project number
+    string title = 3; // empty keeps the current title
+    string description = 4; // empty keeps the current description
+}
+
+message UpdateMergeRequestResponse {
+    MergeRequestDetail merge_request = 1;
+}
+
+message ListMergeRequestsRequest {
+    ProjectContext context = 1;
+    string status = 2; // optional filter: open, merged, closed
+    int32 limit = 3;
+}
+
+message ListMergeRequestsResponse {
+    repeated MergeRequestDetail merge_requests = 1;
+}
+
+message MergeMergeRequestRequest {
+    ProjectContext context = 1;
+    int64 number = 2; // sequential per-project number
+}
+
+message MergeMergeRequestResponse {
+    MergeRequestDetail merge_request = 1;
+    MergeabilityDetail mergeability = 2;
+}
+
+message CloseMergeRequestRequest {
+    ProjectContext context = 1;
+    int64 number = 2; // sequential per-project number
+}
+
+message CloseMergeRequestResponse {
+    MergeRequestDetail merge_request = 1;
+}
+
+message ReviewActor {
+    string user_id = 1; // base36 snow ID
+    string name = 2;
+    string photo_url = 3;
+}
+
+message ReviewCommentDetail {
+    string id = 1; // base36 snow ID
+    string thread_id = 2; // base36 snow ID
+    ReviewActor user = 3;
+    string body = 4;
+    bool system = 5; // generated, e.g. the "resolved this thread" marker
+    google.protobuf.Timestamp created_at = 6;
+    google.protobuf.Timestamp updated_at = 7;
+    bool edited = 8; // updated_at differs from created_at
+}
+
+message MergeRequestThreadDetail {
+    string id = 1; // base36 snow ID
+    int64 merge_request_id = 2;
+    string review_id = 3; // base36 snow ID of the submitting review
+    string file_path = 4; // empty for a top-level conversation thread
+    optional int64 old_line = 5;
+    optional int64 new_line = 6;
+    string side = 7; // left, right, or empty for a top-level thread
+    bool outdated = 8; // the thread comments on a line the new head no longer shows
+    bool resolved = 9;
+    ReviewActor resolved_by = 10;
+    google.protobuf.Timestamp resolved_at = 11;
+    ReviewActor created_by = 12;
+    google.protobuf.Timestamp created_at = 13;
+    repeated ReviewCommentDetail comments = 14;
+}
+
+message MergeRequestReviewDetail {
+    string id = 1; // base36 snow ID
+    int64 merge_request_id = 2; // the merge request row ID
+    ReviewActor reviewer = 3;
+    string state = 4; // approved, changes_requested, or commented
+    string body = 5;
+    string head_commit_id = 6; // base36 snow ID the review was given for
+    bool stale = 7; // the source branch moved on, so the decision no longer counts
+    google.protobuf.Timestamp dismissed_at = 8;
+    string dismissed_reason = 9; // new_commits or manual
+    ReviewActor dismissed_by = 10;
+    google.protobuf.Timestamp created_at = 11;
+    google.protobuf.Timestamp updated_at = 12;
+}
+
+message MergeRequestReviewState {
+    int32 approvals = 1;
+    int32 changes_requested = 2;
+    int32 dismissed_approvals = 3;
+    repeated string outstanding_reviewers = 4; // base36 snow IDs
+    string head_commit_id = 5; // base36 snow ID of the source head
+}
+
+message ReviewRequestDetail {
+    string id = 1; // base36 snow ID
+    int64 merge_request_id = 2;
+    ReviewActor reviewer = 3;
+    ReviewActor requested_by = 4;
+    google.protobuf.Timestamp created_at = 5;
+}
+
+message MergeRequestTimelineItem {
+    string id = 1; // base36 snow ID
+    string kind = 2; // pushed, review_submitted, review_dismissed, review_requested, or review_request_removed
+    ReviewActor actor = 3;
+    ReviewActor subject = 4; // the user an event is about, e.g. a requested reviewer
+    string body = 5;
+    string commit_id = 6; // base36 snow ID the event refers to
+    string commit_hash = 7;
+    google.protobuf.Timestamp created_at = 8;
+}
+
+message ReviewCommentInput {
+    string file_path = 1; // empty starts a top-level conversation thread
+    optional int64 old_line = 2;
+    optional int64 new_line = 3;
+    string body = 4;
+}
+
+message SubmitMergeRequestReviewRequest {
+    ProjectContext context = 1;
+    int64 number = 2; // sequential per-project number
+    string state = 3; // approved, changes_requested, or commented
+    string body = 4; // optional overall comment
+    repeated ReviewCommentInput comments = 5;
+}
+
+message SubmitMergeRequestReviewResponse {
+    MergeRequestReviewDetail review = 1;
+}
+
+message ListMergeRequestReviewsRequest {
+    ProjectContext context = 1;
+    int64 number = 2;
+}
+
+message ListMergeRequestReviewsResponse {
+    repeated MergeRequestReviewDetail reviews = 1;
+}
+
+message GetMergeRequestReviewStateRequest {
+    ProjectContext context = 1;
+    int64 number = 2;
+}
+
+message GetMergeRequestReviewStateResponse {
+    MergeRequestReviewState state = 1;
+}
+
+message WithdrawMergeRequestReviewRequest {
+    ProjectContext context = 1;
+    int64 number = 2;
+    string review_id = 3; // base36 snow ID
+}
+
+message WithdrawMergeRequestReviewResponse {
+}
+
+message DismissMergeRequestReviewRequest {
+    ProjectContext context = 1;
+    int64 number = 2;
+    string review_id = 3; // base36 snow ID
+}
+
+message DismissMergeRequestReviewResponse {
+    MergeRequestReviewDetail review = 1;
+}
+
+message ListMergeRequestThreadsRequest {
+    ProjectContext context = 1;
+    int64 number = 2;
+    optional bool resolved = 3; // omit for every thread
+}
+
+message ListMergeRequestThreadsResponse {
+    repeated MergeRequestThreadDetail threads = 1;
+}
+
+message AddMergeRequestCommentRequest {
+    ProjectContext context = 1;
+    int64 number = 2;
+    string file_path = 3; // empty starts a top-level conversation thread
+    optional int64 old_line = 4;
+    optional int64 new_line = 5;
+    string body = 6;
+}
+
+message AddMergeRequestCommentResponse {
+    MergeRequestThreadDetail thread = 1;
+}
+
+message ReplyMergeRequestThreadRequest {
+    ProjectContext context = 1;
+    int64 number = 2;
+    string thread_id = 3; // base36 snow ID
+    string body = 4;
+}
+
+message ReplyMergeRequestThreadResponse {
+    ReviewCommentDetail comment = 1;
+}
+
+message UpdateMergeRequestCommentRequest {
+    ProjectContext context = 1;
+    int64 number = 2;
+    string thread_id = 3; // base36 snow ID
+    string comment_id = 4; // base36 snow ID
+    string body = 5;
+}
+
+message UpdateMergeRequestCommentResponse {
+    ReviewCommentDetail comment = 1;
+}
+
+message DeleteMergeRequestCommentRequest {
+    ProjectContext context = 1;
+    int64 number = 2;
+    string thread_id = 3; // base36 snow ID
+    string comment_id = 4; // base36 snow ID
+}
+
+message DeleteMergeRequestCommentResponse {
+}
+
+message ResolveMergeRequestThreadRequest {
+    ProjectContext context = 1;
+    int64 number = 2;
+    string thread_id = 3; // base36 snow ID
+    bool resolved = 4;
+}
+
+message ResolveMergeRequestThreadResponse {
+    MergeRequestThreadDetail thread = 1;
+}
+
+message DeleteMergeRequestThreadRequest {
+    ProjectContext context = 1;
+    int64 number = 2;
+    string thread_id = 3; // base36 snow ID
+}
+
+message DeleteMergeRequestThreadResponse {
+}
+
+message ListMergeRequestReviewRequestsRequest {
+    ProjectContext context = 1;
+    int64 number = 2;
+}
+
+message ListMergeRequestReviewRequestsResponse {
+    repeated ReviewRequestDetail review_requests = 1;
+}
+
+message RequestMergeRequestReviewRequest {
+    ProjectContext context = 1;
+    int64 number = 2;
+    string user_id = 3; // base36 snow ID
+}
+
+message RequestMergeRequestReviewResponse {
+    ReviewRequestDetail review_request = 1;
+}
+
+message RemoveMergeRequestReviewRequestRequest {
+    ProjectContext context = 1;
+    int64 number = 2;
+    string user_id = 3; // base36 snow ID
+}
+
+message RemoveMergeRequestReviewRequestResponse {
+}
+
+message ListMergeRequestTimelineRequest {
+    ProjectContext context = 1;
+    int64 number = 2;
+}
+
+message ListMergeRequestTimelineResponse {
+    repeated MergeRequestTimelineItem items = 1;
+}
+
+message FileLockDetail {
+    string id = 1; // base36 snow ID
+    string path = 2; // file path or directory prefix
+    string branch = 3; // branch name; empty for mainline (project-global) locks
+    bool global = 4; // true when the lock applies to the default branch
+    string held_by = 5; // base36 snow ID
+    string held_by_name = 6;
+    optional int64 merge_request_number = 7;
+    google.protobuf.Timestamp acquired_at = 8;
+}
+
+message LockFileRequest {
+    ProjectContext context = 1;
+    string path = 2;
+    string branch = 3; // empty locks the default branch (mainline)
+}
+
+message LockFileResponse {
+    FileLockDetail lock = 1;
+}
+
+message UnlockFileRequest {
+    ProjectContext context = 1;
+    string path = 2;
+    string branch = 3;
+}
+
+message UnlockFileResponse {
+}
+
+message ListFileLocksRequest {
+    ProjectContext context = 1;
+}
+
+message ListFileLocksResponse {
+    repeated FileLockDetail locks = 1;
+}
+
+service NipaService {
+    rpc LoginWithUsernamePassword(LoginUsernamePasswordRequest) returns (LoginResponse);
+    rpc LoginWithRefreshToken(LoginWithRefreshRequest) returns (LoginResponse);
+
+    rpc GetListBranch(GetListBranchRequest) returns (GetListBranchResponse);
+    rpc GetBranch(GetBranchRequest) returns (GetBranchResponse);
+    rpc GetBranchByName(GetBranchByNameRequest) returns (GetBranchByNameResponse);
+    rpc GetDefaultBranch(GetDefaultBranchRequest) returns (GetBranchResponse);
+    rpc CreateBranch(CreateBranchRequest) returns (CreateBranchResponse);
+    rpc RenameBranch(RenameBranchRequest) returns (RenameBranchResponse);
+    rpc DeleteBranch(DeleteBranchRequest) returns (DeleteBranchResponse);
+    rpc SetDefaultBranch(SetDefaultBranchRequest) returns (SetDefaultBranchResponse);
+    rpc SetBranchProtection(SetBranchProtectionRequest) returns (SetBranchProtectionResponse);
+    rpc GetTreeManifest(GetTreeManifestRequest) returns (GetTreeManifestResponse);
+    rpc GetCommitLog(GetCommitLogRequest) returns (GetCommitLogResponse);
+    rpc GetCommit(GetCommitRequest) returns (GetCommitResponse);
+    rpc WalkCommits(WalkCommitsRequest) returns (WalkCommitsResponse);
+    rpc GetMergeBase(GetMergeBaseRequest) returns (GetMergeBaseResponse);
+    rpc MergeFastForward(MergeFastForwardRequest) returns (MergeFastForwardResponse);
+    rpc CreateMergeRequest(CreateMergeRequestRequest) returns (CreateMergeRequestResponse);
+    rpc UpdateMergeRequest(UpdateMergeRequestRequest) returns (UpdateMergeRequestResponse);
+    rpc ListMergeRequests(ListMergeRequestsRequest) returns (ListMergeRequestsResponse);
+    rpc MergeMergeRequest(MergeMergeRequestRequest) returns (MergeMergeRequestResponse);
+    rpc CloseMergeRequest(CloseMergeRequestRequest) returns (CloseMergeRequestResponse);
+
+    rpc SubmitMergeRequestReview(SubmitMergeRequestReviewRequest) returns (SubmitMergeRequestReviewResponse);
+    rpc ListMergeRequestReviews(ListMergeRequestReviewsRequest) returns (ListMergeRequestReviewsResponse);
+    rpc GetMergeRequestReviewState(GetMergeRequestReviewStateRequest) returns (GetMergeRequestReviewStateResponse);
+    rpc WithdrawMergeRequestReview(WithdrawMergeRequestReviewRequest) returns (WithdrawMergeRequestReviewResponse);
+    rpc DismissMergeRequestReview(DismissMergeRequestReviewRequest) returns (DismissMergeRequestReviewResponse);
+
+    rpc ListMergeRequestThreads(ListMergeRequestThreadsRequest) returns (ListMergeRequestThreadsResponse);
+    rpc AddMergeRequestComment(AddMergeRequestCommentRequest) returns (AddMergeRequestCommentResponse);
+    rpc ReplyMergeRequestThread(ReplyMergeRequestThreadRequest) returns (ReplyMergeRequestThreadResponse);
+    rpc UpdateMergeRequestComment(UpdateMergeRequestCommentRequest) returns (UpdateMergeRequestCommentResponse);
+    rpc DeleteMergeRequestComment(DeleteMergeRequestCommentRequest) returns (DeleteMergeRequestCommentResponse);
+    rpc ResolveMergeRequestThread(ResolveMergeRequestThreadRequest) returns (ResolveMergeRequestThreadResponse);
+    rpc DeleteMergeRequestThread(DeleteMergeRequestThreadRequest) returns (DeleteMergeRequestThreadResponse);
+
+    rpc ListMergeRequestReviewRequests(ListMergeRequestReviewRequestsRequest) returns (ListMergeRequestReviewRequestsResponse);
+    rpc RequestMergeRequestReview(RequestMergeRequestReviewRequest) returns (RequestMergeRequestReviewResponse);
+    rpc RemoveMergeRequestReviewRequest(RemoveMergeRequestReviewRequestRequest) returns (RemoveMergeRequestReviewRequestResponse);
+
+    rpc ListMergeRequestTimeline(ListMergeRequestTimelineRequest) returns (ListMergeRequestTimelineResponse);
+    rpc Push(PushRequest) returns (PushResponse);
+    rpc GetChunkUploadUrls(GetChunkUploadUrlsRequest) returns (GetChunkUploadUrlsResponse);
+    rpc GetChunkDownloadUrls(GetChunkDownloadUrlsRequest) returns (GetChunkDownloadUrlsResponse);
+    rpc ConfirmChunkUploads(ConfirmChunkUploadsRequest) returns (ConfirmChunkUploadsResponse);
+
+    rpc LockFile(LockFileRequest) returns (LockFileResponse);
+    rpc UnlockFile(UnlockFileRequest) returns (UnlockFileResponse);
+    rpc ListFileLocks(ListFileLocksRequest) returns (ListFileLocksResponse);
+
+    rpc GetMyPermissions(GetMyPermissionsRequest) returns (GetMyPermissionsResponse);
+    rpc CreatePBACRule(CreatePBACRuleRequest) returns (CreatePBACRuleResponse);
+    rpc ListPBACRules(ListPBACRulesRequest) returns (ListPBACRulesResponse);
+    rpc DeletePBACRule(DeletePBACRuleRequest) returns (DeletePBACRuleResponse);
+    rpc ListProjectPathPermissions(ListProjectPathPermissionsRequest) returns (ListProjectPathPermissionsResponse);
+    rpc SetProjectPathPermission(SetProjectPathPermissionRequest) returns (SetProjectPathPermissionResponse);
+    rpc DeleteProjectPathPermission(DeleteProjectPathPermissionRequest) returns (DeleteProjectPathPermissionResponse);
+    rpc CreateGroup(CreateGroupRequest) returns (CreateGroupResponse);
+    rpc ListGroups(ListGroupsRequest) returns (ListGroupsResponse);
+    rpc AddGroupMember(AddGroupMemberRequest) returns (AddGroupMemberResponse);
+    rpc RemoveGroupMember(RemoveGroupMemberRequest) returns (RemoveGroupMemberResponse);
+}
