@@ -8,8 +8,11 @@
 #include <QVBoxLayout>
 #include <QWidget>
 
-MainWindow::MainWindow(QWidget *parent)
+#include <utility>
+
+MainWindow::MainWindow(QWidget *parent, QString daemonConfigPath)
     : QMainWindow(parent)
+    , daemonConfigPath_(std::move(daemonConfigPath))
 {
     setWindowTitle(QStringLiteral("nipa-gui"));
     resize(560, 220);
@@ -36,7 +39,7 @@ void MainWindow::refresh()
 {
     DaemonStatus status;
     QString error;
-    const DaemonConnection connection;
+    const DaemonConnection connection(daemonConfigPath_);
     if (connection.ping(&status, &error)) {
         statusLabel_->setText(tr("Connected to nipa daemon %1 (pid %2) at %3")
                                   .arg(status.version, QString::number(status.pid), status.endpoint));

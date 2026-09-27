@@ -10,6 +10,9 @@ struct DaemonStatus {
 
 class DaemonConnection {
 public:
+    DaemonConnection() = default;
+    explicit DaemonConnection(const QString &configPath);
+
     bool ping(DaemonStatus *status, QString *error) const;
 
 private:
@@ -21,4 +24,6 @@ private:
     };
 
     bool loadEndpoint(Endpoint *endpoint, QString *error) const;
+
+    QString configPath_;
 };

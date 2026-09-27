@@ -5,6 +5,9 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 
+option(NIPA_BUILD_TESTS "Build the unit tests" OFF)
+option(NIPA_COVERAGE "Instrument the sources for gcov coverage" OFF)
+
 find_package(Qt6 REQUIRED COMPONENTS Widgets)
 find_package(Protobuf REQUIRED)
 find_package(Threads REQUIRED)
@@ -30,29 +33,42 @@ else()
     find_program(NIPA_GRPC_PLUGIN NAMES grpc_cpp_plugin REQUIRED)
 endif()
 
-add_executable(nipa-gui WIN32
-    src/main.cpp
+# Application logic lives in a library so that the unit tests can link it.
+add_library(nipa-gui-core STATIC
     src/daemonconnection.cpp
     src/daemonconnection.h
     src/mainwindow.cpp
     src/mainwindow.h
 )
-target_link_libraries(nipa-gui PRIVATE Qt6::Widgets protobuf::libprotobuf ${NIPA_GRPC_LIBS})
-target_include_directories(nipa-gui PRIVATE
+target_link_libraries(nipa-gui-core PUBLIC Qt6::Widgets protobuf::libprotobuf ${NIPA_GRPC_LIBS})
+target_include_directories(nipa-gui-core PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
     "${CMAKE_CURRENT_BINARY_DIR}"
     "${CMAKE_CURRENT_BINARY_DIR}/proto"
 )
 
 protobuf_generate(
-    TARGET nipa-gui
+    TARGET nipa-gui-core
     LANGUAGE cpp
     PROTOS proto/server.proto proto/daemon.proto
 )
 protobuf_generate(
-    TARGET nipa-gui
+    TARGET nipa-gui-core
     LANGUAGE grpc
     GENERATE_EXTENSIONS .grpc.pb.h .grpc.pb.cc
     PLUGIN "protoc-gen-grpc=${NIPA_GRPC_PLUGIN}"
     PROTOS proto/server.proto proto/daemon.proto
 )
+
+add_executable(nipa-gui WIN32 src/main.cpp)
+target_link_libraries(nipa-gui PRIVATE nipa-gui-core)
+
+if(NIPA_COVERAGE)
+    target_compile_options(nipa-gui-core PUBLIC --coverage -O0 -g)
+    target_link_options(nipa-gui-core PUBLIC --coverage)
+endif()
+
+if(NIPA_BUILD_TESTS)
+    enable_testing()
+    add_subdirectory(tests)
+endif()

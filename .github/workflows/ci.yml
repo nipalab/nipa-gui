@@ -22,16 +22,44 @@ jobs:
             libprotobuf-dev protobuf-compiler protobuf-compiler-grpc libgrpc++-dev
 
       - name: Configure
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+        run: >
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Debug
+          -DNIPA_BUILD_TESTS=ON
+          -DNIPA_COVERAGE=ON
+          -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 
       - name: Build
         run: cmake --build build
+
+      - name: Run tests
+        run: ctest --test-dir build --output-on-failure
+        env:
+          QT_QPA_PLATFORM: offscreen
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install gcovr
+        run: pip install gcovr
+
+      - name: Generate coverage report
+        run: gcovr --sonarqube --filter 'src/' --output build/coverage.xml
 
       - name: Upload compilation database
         uses: actions/upload-artifact@v4
         with:
           name: compile-commands
           path: build/compile_commands.json
+          retention-days: 1
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: build/coverage.xml
           retention-days: 1
 
   sonarqube:
@@ -47,6 +75,12 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: compile-commands
+          path: build
+
+      - name: Download coverage report
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage
           path: build
 
       - name: SonarQube Scan

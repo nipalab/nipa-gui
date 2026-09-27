@@ -39,9 +39,14 @@ QString daemonConfigPath()
 
 } // namespace
 
+DaemonConnection::DaemonConnection(const QString &configPath)
+    : configPath_(configPath)
+{
+}
+
 bool DaemonConnection::loadEndpoint(Endpoint *endpoint, QString *error) const
 {
-    const QString path = daemonConfigPath();
+    const QString path = configPath_.isEmpty() ? daemonConfigPath() : configPath_;
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly)) {
         *error = QObject::tr("cannot read %1 (%2) - is `nipa serve` running?").arg(path, file.errorString());
