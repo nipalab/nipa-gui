@@ -46,7 +46,12 @@ jobs:
         run: pip install gcovr
 
       - name: Generate coverage report
-        run: gcovr --sonarqube --filter 'src/' --output build/coverage.xml
+        run: >
+          gcovr --sonarqube
+          --filter 'src/'
+          --exclude-throw-branches
+          --exclude-unreachable-branches
+          --output build/coverage.xml
 
       - name: Upload compilation database
         uses: actions/upload-artifact@v4
