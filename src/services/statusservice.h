@@ -29,9 +29,14 @@ public:
 public slots:
     void refresh(bool noCache = false);
 
+    /// Stages (`add`) or unstages (`unstage`) repository-relative paths; the
+    /// refreshed status is emitted through statusChanged().
+    void stage(const QStringList &add, const QStringList &unstage);
+
 signals:
     void statusChanged(const QString &root, const StatusSnapshot &snapshot);
     void refreshFailed(const QString &root, const QString &message);
+    void stageFailed(const QString &message);
 
 private:
     DaemonChannel *channel_;

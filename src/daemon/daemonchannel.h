@@ -13,6 +13,8 @@
 
 #include "daemon.grpc.pb.h"
 #include "daemonconnection.h"
+#include "daemondiff.h"
+#include "daemonoperation.h"
 #include "daemontypes.h"
 
 /// Persistent, asynchronous view of the local `nipa serve` daemon.
@@ -61,6 +63,15 @@ public:
     /// Runs synchronously with a short deadline; call once at application exit.
     void shutdownIfOwned();
 
+    /// Starts a streamed Update ("Get Latest") for the root.
+    DaemonOperation *update(const QString &root);
+
+    /// Starts a streamed Push (Submit) of the root's staged set.
+    DaemonOperation *push(const QString &root, const QString &message);
+
+    /// Starts a streamed Diff; the returned object emits text chunks.
+    DaemonDiff *diff(const QString &root, const DiffRequestData &request);
+
     /// Numeric dotted version comparison (-1, 0, 1); tolerates a leading "v".
     static int compareVersions(const QString &a, const QString &b);
 
@@ -72,6 +83,16 @@ public slots:
     void watchRepo(const QString &root);
     void unwatchRepo(const QString &root);
     void fetchStatus(const QString &root, bool noCache = false);
+    void fetchTree(const QString &root, const QString &branch, const QStringList &paths);
+    void stage(const QString &root, const QStringList &add, const QStringList &unstage);
+    void fetchCommitLog(const QString &root,
+                        const QString &branch,
+                        const QString &startCommitId,
+                        int limit);
+    void fetchCommit(const QString &root, const QString &commitId);
+    void fetchLocks(const QString &root);
+    void lockFile(const QString &root, const QString &path, const QString &branch);
+    void unlockFile(const QString &root, const QString &path, const QString &branch);
 
 signals:
     void stateChanged(DaemonChannel::State state, const QString &detail);
@@ -85,6 +106,25 @@ signals:
     void repoWatched(bool ok, const RepoInfo &repo, const QString &error);
     void repoUnwatched(bool ok, const QString &root, const QString &error);
     void statusFetched(bool ok, const QString &root, const StatusSnapshot &status, const QString &error);
+    void treeFetched(bool ok,
+                     const QString &root,
+                     const QString &branch,
+                     const TreeNodeData &rootNode,
+                     const QString &error);
+    void staged(bool ok, const QString &root, const StatusSnapshot &status, const QString &error);
+    void commitLogFetched(bool ok,
+                          const QString &root,
+                          const QString &branch,
+                          const QList<CommitInfo> &commits,
+                          const QString &error);
+    void commitFetched(bool ok,
+                       const QString &root,
+                       const CommitInfo &commit,
+                       const TreeNodeData &tree,
+                       const QString &error);
+    void locksFetched(bool ok, const QString &root, const QList<FileLockInfo> &locks, const QString &error);
+    void fileLocked(bool ok, const QString &root, const FileLockInfo &lock, const QString &error);
+    void fileUnlocked(bool ok, const QString &root, const QString &path, const QString &error);
 
 private:
     void tryConnect();
@@ -98,6 +138,12 @@ private:
     void setState(State state, const QString &detail);
 
     void runAsync(std::function<void()> work, std::function<void()> done);
+
+    using OpReader = grpc::ClientReader<nipadaemon::OpEvent>;
+    DaemonOperation *startOperation(
+        DaemonOperation::Kind kind,
+        std::function<std::unique_ptr<OpReader>(grpc::ClientContext *)> startStream);
+    void queueOperationFailure(DaemonOperation *operation, int code, const QString &message);
 
     QString configPath_;
     bool autoSpawn_ = true;

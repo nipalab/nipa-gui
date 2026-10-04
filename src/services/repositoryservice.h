@@ -23,16 +23,19 @@ public:
 
 public slots:
     void refresh();
+    void refreshTree();
     void open(const QString &root);
     void close();
 
 signals:
     void reposChanged(const QList<RepoInfo> &repos);
     void activeRepoChanged(const RepoInfo &repo); // empty root when closed
+    void treeChanged(const QString &root, const TreeNodeData &tree);
     void errorOccurred(const QString &message);
 
 private:
     DaemonChannel *channel_;
     QList<RepoInfo> repos_;
     RepoInfo activeRepo_;
+    TreeNodeData tree_;
 };

@@ -38,23 +38,35 @@ cmake --build build
 
 ## Status
 
-Milestone 0 (foundation) is implemented:
+Milestones 0–2 are implemented:
 
 - **Daemon lifecycle** — auto-spawns `nipa serve` when no discovery file
   exists, waits for readiness, reconnects when the daemon disappears, and
   shuts down only a daemon it started itself.
 - **Async transport** — a persistent gRPC channel with token auth; every call
   runs off the UI thread and reports back as a Qt signal.
-- **Repositories** — the daemon's `ListRepos` registry, `WatchRepo`/`UnwatchRepo`
-  for the active working copy.
+- **Repositories & tree** — the daemon's `ListRepos` registry plus the
+  recursive branch manifest (`ProxyTreeManifest`, scoped by the clone's sparse
+  prefixes) shown as a lazily expanded tree with size/binary/read-only hints.
 - **Pending changes** — a P4V-style status table (staged/modified/untracked/
   missing/deleted/conflicts, detached-HEAD aware) fed by the daemon's cached
-  `Status`, with category filtering and optional polling.
+  `Status`, with category filtering, polling and Stage/Unstage from both the
+  pending list and the tree.
+- **Submit & Update** — a description dialog for `Push` and streamed progress
+  with cancel for both `Push` and `Update` (`OpEvent` queue/phase/object/byte
+  events), then an automatic status and tree refresh.
+- **History** — paginated commit log (`ProxyCommitLog` cursor via the last
+  commit id), commit detail with author/message/parents and the tree at that
+  commit, plus commit and per-file commit diffs.
+- **Diff viewer** — streamed `Diff` output with per-line coloring, working /
+  staged / revision comparisons, `patch`/`stat`/`name_only`/`name_status`
+  formats, whitespace and context options, cancellation and export.
+- **Locks** — binary lock list (scope, holder, acquisition time), lock/unlock
+  from the tree and locks tab, and a warning when staging/submitting paths
+  someone else has locked.
 
-Next: the repository tree (per branch), stage/unstage, Submit/Update with
-progress, history and diff
-(M1–M2). The full roadmap (locks, branches, revision graph, merge requests,
-sparse checkouts, ACLs, P4V parity) is tracked in
+Next: branch management, switch/merge and the revision graph (M3). The full
+roadmap (merge requests, sparse checkouts, ACLs, P4V parity) is tracked in
 [INTEGRATIONS.md](https://github.com/nipalab/nipa/blob/main/docs/INTEGRATIONS.md).
 
 ## License

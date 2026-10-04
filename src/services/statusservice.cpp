@@ -44,6 +44,19 @@ StatusService::StatusService(DaemonChannel *channel, RepositoryService *reposito
                 snapshot_ = status;
                 emit statusChanged(root_, snapshot_);
             });
+
+    connect(channel_, &DaemonChannel::staged, this,
+            [this](bool ok, const QString &root, const StatusSnapshot &status, const QString &error) {
+                if (!ok) {
+                    emit stageFailed(error);
+                    return;
+                }
+                if (root != root_) {
+                    return;
+                }
+                snapshot_ = status;
+                emit statusChanged(root_, snapshot_);
+            });
 }
 
 QString StatusService::root() const
@@ -87,4 +100,12 @@ void StatusService::refresh(bool noCache)
         return;
     }
     channel_->fetchStatus(root_, noCache);
+}
+
+void StatusService::stage(const QStringList &add, const QStringList &unstage)
+{
+    if (root_.isEmpty()) {
+        return;
+    }
+    channel_->stage(root_, add, unstage);
 }

@@ -39,15 +39,35 @@ add_library(nipa-gui-core STATIC
     src/daemon/daemonchannel.h
     src/daemon/daemonconnection.cpp
     src/daemon/daemonconnection.h
+    src/daemon/daemondiff.cpp
+    src/daemon/daemondiff.h
+    src/daemon/daemonoperation.cpp
+    src/daemon/daemonoperation.h
     src/daemon/daemontypes.h
+    src/models/commitlogmodel.cpp
+    src/models/commitlogmodel.h
+    src/models/locksmodel.cpp
+    src/models/locksmodel.h
+    src/models/repositorytreemodel.cpp
+    src/models/repositorytreemodel.h
     src/models/statusmodel.cpp
     src/models/statusmodel.h
+    src/services/historyservice.cpp
+    src/services/historyservice.h
+    src/services/lockservice.cpp
+    src/services/lockservice.h
     src/services/repositoryservice.cpp
     src/services/repositoryservice.h
     src/services/statusservice.cpp
     src/services/statusservice.h
+    src/ui/diffview.cpp
+    src/ui/diffview.h
     src/ui/mainwindow.cpp
     src/ui/mainwindow.h
+    src/ui/operationprogressdialog.cpp
+    src/ui/operationprogressdialog.h
+    src/ui/submitdialog.cpp
+    src/ui/submitdialog.h
 )
 target_link_libraries(nipa-gui-core PUBLIC Qt6::Widgets Qt6::Concurrent protobuf::libprotobuf ${NIPA_GRPC_LIBS})
 target_include_directories(nipa-gui-core PUBLIC
