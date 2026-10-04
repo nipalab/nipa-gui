@@ -13,7 +13,7 @@ class MainWindowTest : public QObject {
 private slots:
     void showsDisconnectedStatus();
     void reconnectsAfterDaemonAppears();
-    void showsWorkspaceStatus();
+    void showsRepositoryStatus();
 };
 
 void MainWindowTest::showsDisconnectedStatus()
@@ -47,7 +47,7 @@ void MainWindowTest::reconnectsAfterDaemonAppears()
     QVERIFY(label->text().startsWith(QStringLiteral("Connected:")));
 }
 
-void MainWindowTest::showsWorkspaceStatus()
+void MainWindowTest::showsRepositoryStatus()
 {
     FakeDaemon daemon;
     nipadaemon::RepoInfo repo;
@@ -72,7 +72,7 @@ void MainWindowTest::showsWorkspaceStatus()
     auto *connection = window.findChild<QLabel *>(QStringLiteral("connectionLabel"));
     QTRY_VERIFY_WITH_TIMEOUT(connection->text().contains(QStringLiteral("9.9.9")), 10000);
 
-    window.openWorkspace(QStringLiteral("/work/assets"));
+    window.openRepository(QStringLiteral("/work/assets"));
 
     auto *table = window.findChild<QTableView *>(QStringLiteral("statusTable"));
     QVERIFY(table != nullptr);
@@ -82,9 +82,9 @@ void MainWindowTest::showsWorkspaceStatus()
     QVERIFY(branch != nullptr);
     QTRY_VERIFY(branch->text().contains(QStringLiteral("main")));
 
-    auto *workspaceLabel = window.findChild<QLabel *>(QStringLiteral("workspaceLabel"));
-    QVERIFY(workspaceLabel != nullptr);
-    QCOMPARE(workspaceLabel->text(), QStringLiteral("/work/assets"));
+    auto *repositoryLabel = window.findChild<QLabel *>(QStringLiteral("repositoryLabel"));
+    QVERIFY(repositoryLabel != nullptr);
+    QCOMPARE(repositoryLabel->text(), QStringLiteral("/work/assets"));
 
     QCOMPARE(daemon.service().watchedRoots.size(), std::size_t(1));
     QCOMPARE(daemon.service().statusRequests.size(), std::size_t(1));

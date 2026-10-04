@@ -13,11 +13,11 @@ class QListWidget;
 class QPlainTextEdit;
 class QTableView;
 
+class RepositoryService;
 class StatusModel;
 class StatusService;
-class WorkspaceService;
 
-/// P4V-style shell: workspaces dock on the left, pending-changes table in the
+/// P4V-style shell: repositories dock on the left, pending-changes table in the
 /// center, daemon log at the bottom. The window is a pure view; all state
 /// lives in the daemon services.
 class MainWindow : public QMainWindow {
@@ -29,8 +29,8 @@ public:
                         bool autoSpawnDaemon = true);
     ~MainWindow() override;
 
-    /// Opens a working copy through the daemon (also used by tests).
-    void openWorkspace(const QString &root);
+    /// Opens a repository through the daemon (also used by tests).
+    void openRepository(const QString &root);
     void reconnectToDaemon();
 
 protected:
@@ -44,7 +44,7 @@ private slots:
     void onReposChanged(const QList<RepoInfo> &repos);
     void onActiveRepoChanged(const RepoInfo &repo);
     void onStatusChanged(const QString &root, const StatusSnapshot &snapshot);
-    void promptForWorkspace();
+    void promptForRepository();
     void refreshStatus();
 
 private:
@@ -53,23 +53,23 @@ private:
     void appendLog(const QString &message);
     void updateBranchLabel(const StatusSnapshot &snapshot);
     void updateCategoryFilter();
-    void selectActiveWorkspaceItem();
+    void selectActiveRepositoryItem();
 
     DaemonChannel *channel_ = nullptr;
-    WorkspaceService *workspace_ = nullptr;
+    RepositoryService *repository_ = nullptr;
     StatusService *status_ = nullptr;
     StatusModel *statusModel_ = nullptr;
 
-    QListWidget *workspacesList_ = nullptr;
+    QListWidget *repositoriesList_ = nullptr;
     QTableView *statusTable_ = nullptr;
     QComboBox *categoryFilter_ = nullptr;
-    QLabel *workspaceLabel_ = nullptr;
+    QLabel *repositoryLabel_ = nullptr;
     QLabel *branchLabel_ = nullptr;
     QLabel *connectionLabel_ = nullptr;
     QPlainTextEdit *logEdit_ = nullptr;
 
-    QAction *openWorkspaceAction_ = nullptr;
-    QAction *closeWorkspaceAction_ = nullptr;
+    QAction *openRepositoryAction_ = nullptr;
+    QAction *closeRepositoryAction_ = nullptr;
     QAction *refreshAction_ = nullptr;
     QAction *reconnectAction_ = nullptr;
     QAction *quitAction_ = nullptr;

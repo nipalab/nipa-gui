@@ -1,8 +1,8 @@
 #include "mainwindow.h"
 
 #include "models/statusmodel.h"
+#include "services/repositoryservice.h"
 #include "services/statusservice.h"
-#include "services/workspaceservice.h"
 
 #include <QAction>
 #include <QApplication>
@@ -37,8 +37,8 @@ MainWindow::MainWindow(QWidget *parent, QString daemonConfigPath, bool autoSpawn
 
     channel_ = new DaemonChannel(std::move(daemonConfigPath), this);
     channel_->setAutoSpawnEnabled(autoSpawnDaemon);
-    workspace_ = new WorkspaceService(channel_, this);
-    status_ = new StatusService(channel_, workspace_, this);
+    repository_ = new RepositoryService(channel_, this);
+    status_ = new StatusService(channel_, repository_, this);
 
     connect(channel_, &DaemonChannel::stateChanged, this, &MainWindow::onStateChanged);
     connect(channel_, &DaemonChannel::connected, this, &MainWindow::onConnected);
@@ -50,10 +50,10 @@ MainWindow::MainWindow(QWidget *parent, QString daemonConfigPath, bool autoSpawn
                               .arg(daemonVersion, minimumVersion));
             });
 
-    connect(workspace_, &WorkspaceService::reposChanged, this, &MainWindow::onReposChanged);
-    connect(workspace_, &WorkspaceService::activeRepoChanged, this, &MainWindow::onActiveRepoChanged);
-    connect(workspace_, &WorkspaceService::errorOccurred, this, [this](const QString &message) {
-        appendLog(tr("Workspace error: %1").arg(message));
+    connect(repository_, &RepositoryService::reposChanged, this, &MainWindow::onReposChanged);
+    connect(repository_, &RepositoryService::activeRepoChanged, this, &MainWindow::onActiveRepoChanged);
+    connect(repository_, &RepositoryService::errorOccurred, this, [this](const QString &message) {
+        appendLog(tr("Repository error: %1").arg(message));
     });
 
     connect(status_, &StatusService::statusChanged, this, &MainWindow::onStatusChanged);
@@ -77,11 +77,11 @@ void MainWindow::buildUi()
     layout->setContentsMargins(6, 6, 6, 6);
 
     auto *header = new QHBoxLayout();
-    workspaceLabel_ = new QLabel(tr("No workspace open"), central);
-    workspaceLabel_->setObjectName(QStringLiteral("workspaceLabel"));
-    QFont workspaceFont = workspaceLabel_->font();
-    workspaceFont.setBold(true);
-    workspaceLabel_->setFont(workspaceFont);
+    repositoryLabel_ = new QLabel(tr("No repository open"), central);
+    repositoryLabel_->setObjectName(QStringLiteral("repositoryLabel"));
+    QFont repositoryFont = repositoryLabel_->font();
+    repositoryFont.setBold(true);
+    repositoryLabel_->setFont(repositoryFont);
 
     branchLabel_ = new QLabel(central);
     branchLabel_->setObjectName(QStringLiteral("branchLabel"));
@@ -96,7 +96,7 @@ void MainWindow::buildUi()
     refreshButton->setObjectName(QStringLiteral("refreshStatusButton"));
     connect(refreshButton, &QPushButton::clicked, this, &MainWindow::refreshStatus);
 
-    header->addWidget(workspaceLabel_);
+    header->addWidget(repositoryLabel_);
     header->addWidget(branchLabel_);
     header->addStretch();
     header->addWidget(new QLabel(tr("Show:"), central));
@@ -120,33 +120,33 @@ void MainWindow::buildUi()
     layout->addWidget(statusTable_);
     setCentralWidget(central);
 
-    auto *workspacesDock = new QDockWidget(tr("Workspaces"), this);
-    workspacesDock->setObjectName(QStringLiteral("workspacesDock"));
-    auto *workspacesPanel = new QWidget(workspacesDock);
-    auto *workspacesLayout = new QVBoxLayout(workspacesPanel);
-    workspacesLayout->setContentsMargins(0, 0, 0, 0);
+    auto *repositoriesDock = new QDockWidget(tr("Repositories"), this);
+    repositoriesDock->setObjectName(QStringLiteral("repositoriesDock"));
+    auto *repositoriesPanel = new QWidget(repositoriesDock);
+    auto *repositoriesLayout = new QVBoxLayout(repositoriesPanel);
+    repositoriesLayout->setContentsMargins(0, 0, 0, 0);
 
-    workspacesList_ = new QListWidget(workspacesPanel);
-    workspacesList_->setObjectName(QStringLiteral("workspacesList"));
-    connect(workspacesList_, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem *item) {
-        openWorkspace(item->data(Qt::UserRole).toString());
+    repositoriesList_ = new QListWidget(repositoriesPanel);
+    repositoriesList_->setObjectName(QStringLiteral("repositoriesList"));
+    connect(repositoriesList_, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem *item) {
+        openRepository(item->data(Qt::UserRole).toString());
     });
 
-    auto *workspaceButtons = new QHBoxLayout();
-    auto *openButton = new QPushButton(tr("Open…"), workspacesPanel);
-    openButton->setObjectName(QStringLiteral("openWorkspaceButton"));
-    auto *refreshReposButton = new QPushButton(tr("Refresh"), workspacesPanel);
+    auto *repositoryButtons = new QHBoxLayout();
+    auto *openButton = new QPushButton(tr("Open…"), repositoriesPanel);
+    openButton->setObjectName(QStringLiteral("openRepositoryButton"));
+    auto *refreshReposButton = new QPushButton(tr("Refresh"), repositoriesPanel);
     refreshReposButton->setObjectName(QStringLiteral("refreshReposButton"));
-    auto *closeButton = new QPushButton(tr("Close"), workspacesPanel);
-    closeButton->setObjectName(QStringLiteral("closeWorkspaceButton"));
-    workspaceButtons->addWidget(openButton);
-    workspaceButtons->addWidget(refreshReposButton);
-    workspaceButtons->addWidget(closeButton);
+    auto *closeButton = new QPushButton(tr("Close"), repositoriesPanel);
+    closeButton->setObjectName(QStringLiteral("closeRepositoryButton"));
+    repositoryButtons->addWidget(openButton);
+    repositoryButtons->addWidget(refreshReposButton);
+    repositoryButtons->addWidget(closeButton);
 
-    workspacesLayout->addWidget(workspacesList_);
-    workspacesLayout->addLayout(workspaceButtons);
-    workspacesDock->setWidget(workspacesPanel);
-    addDockWidget(Qt::LeftDockWidgetArea, workspacesDock);
+    repositoriesLayout->addWidget(repositoriesList_);
+    repositoriesLayout->addLayout(repositoryButtons);
+    repositoriesDock->setWidget(repositoriesPanel);
+    addDockWidget(Qt::LeftDockWidgetArea, repositoriesDock);
 
     auto *logDock = new QDockWidget(tr("Log"), this);
     logDock->setObjectName(QStringLiteral("logDock"));
@@ -156,26 +156,26 @@ void MainWindow::buildUi()
     logDock->setWidget(logEdit_);
     addDockWidget(Qt::BottomDockWidgetArea, logDock);
 
-    resizeDocks({workspacesDock}, {300}, Qt::Horizontal);
+    resizeDocks({repositoriesDock}, {300}, Qt::Horizontal);
     resizeDocks({logDock}, {140}, Qt::Vertical);
 
     connectionLabel_ = new QLabel(tr("Not connected"), this);
     connectionLabel_->setObjectName(QStringLiteral("connectionLabel"));
     statusBar()->addPermanentWidget(connectionLabel_);
 
-    connect(openButton, &QPushButton::clicked, this, &MainWindow::promptForWorkspace);
-    connect(refreshReposButton, &QPushButton::clicked, this, [this] { workspace_->refresh(); });
-    connect(closeButton, &QPushButton::clicked, this, [this] { workspace_->close(); });
+    connect(openButton, &QPushButton::clicked, this, &MainWindow::promptForRepository);
+    connect(refreshReposButton, &QPushButton::clicked, this, [this] { repository_->refresh(); });
+    connect(closeButton, &QPushButton::clicked, this, [this] { repository_->close(); });
 }
 
 void MainWindow::buildActions()
 {
-    openWorkspaceAction_ = new QAction(tr("&Open Workspace…"), this);
-    openWorkspaceAction_->setShortcut(QKeySequence::Open);
-    connect(openWorkspaceAction_, &QAction::triggered, this, &MainWindow::promptForWorkspace);
+    openRepositoryAction_ = new QAction(tr("&Open Repository…"), this);
+    openRepositoryAction_->setShortcut(QKeySequence::Open);
+    connect(openRepositoryAction_, &QAction::triggered, this, &MainWindow::promptForRepository);
 
-    closeWorkspaceAction_ = new QAction(tr("&Close Workspace"), this);
-    connect(closeWorkspaceAction_, &QAction::triggered, this, [this] { workspace_->close(); });
+    closeRepositoryAction_ = new QAction(tr("&Close Repository"), this);
+    connect(closeRepositoryAction_, &QAction::triggered, this, [this] { repository_->close(); });
 
     refreshAction_ = new QAction(tr("&Refresh Status"), this);
     refreshAction_->setShortcut(QKeySequence::Refresh);
@@ -197,8 +197,8 @@ void MainWindow::buildActions()
     });
 
     auto *fileMenu = menuBar()->addMenu(tr("&File"));
-    fileMenu->addAction(openWorkspaceAction_);
-    fileMenu->addAction(closeWorkspaceAction_);
+    fileMenu->addAction(openRepositoryAction_);
+    fileMenu->addAction(closeRepositoryAction_);
     fileMenu->addSeparator();
     fileMenu->addAction(refreshAction_);
     fileMenu->addSeparator();
@@ -210,7 +210,7 @@ void MainWindow::buildActions()
     auto *helpMenu = menuBar()->addMenu(tr("&Help"));
     helpMenu->addAction(aboutAction_);
 
-    closeWorkspaceAction_->setEnabled(false);
+    closeRepositoryAction_->setEnabled(false);
     refreshAction_->setEnabled(false);
 }
 
@@ -235,7 +235,7 @@ void MainWindow::onConnected(const DaemonStatus &status)
 {
     connectionLabel_->setText(
         tr("Connected: nipa %1 (pid %2)").arg(status.version, QString::number(status.pid)));
-    workspace_->refresh();
+    repository_->refresh();
 }
 
 void MainWindow::onDisconnected(const QString &reason)
@@ -252,42 +252,43 @@ void MainWindow::onError(const QString &message)
 
 void MainWindow::onReposChanged(const QList<RepoInfo> &repos)
 {
-    workspacesList_->clear();
+    repositoriesList_->clear();
     for (const RepoInfo &repo : repos) {
-        auto *item = new QListWidgetItem(repo.root, workspacesList_);
+        auto *item = new QListWidgetItem(repo.root, repositoriesList_);
         item->setData(Qt::UserRole, repo.root);
         item->setToolTip(tr("%1\nbranch: %2").arg(repo.url, repo.branch));
     }
-    selectActiveWorkspaceItem();
-    appendLog(tr("%n workspace(s) registered with the daemon", "", repos.size()));
+    selectActiveRepositoryItem();
+    appendLog(repos.size() == 1 ? tr("1 repository registered with the daemon")
+                                : tr("%1 repositories registered with the daemon").arg(repos.size()));
 }
 
 void MainWindow::onActiveRepoChanged(const RepoInfo &repo)
 {
     if (repo.root.isEmpty()) {
-        workspaceLabel_->setText(tr("No workspace open"));
+        repositoryLabel_->setText(tr("No repository open"));
         branchLabel_->clear();
         statusModel_->clear();
         updateCategoryFilter();
         setWindowTitle(QStringLiteral("nipa-gui"));
-        closeWorkspaceAction_->setEnabled(false);
+        closeRepositoryAction_->setEnabled(false);
         refreshAction_->setEnabled(false);
-        selectActiveWorkspaceItem();
+        selectActiveRepositoryItem();
         return;
     }
 
-    workspaceLabel_->setText(repo.root);
+    repositoryLabel_->setText(repo.root);
     branchLabel_->setText(repo.branch.isEmpty() ? QString() : tr("Branch: %1").arg(repo.branch));
     setWindowTitle(tr("nipa-gui — %1").arg(repo.root));
-    closeWorkspaceAction_->setEnabled(true);
+    closeRepositoryAction_->setEnabled(true);
     refreshAction_->setEnabled(true);
-    selectActiveWorkspaceItem();
-    appendLog(tr("Opened workspace %1").arg(repo.root));
+    selectActiveRepositoryItem();
+    appendLog(tr("Opened repository %1").arg(repo.root));
 }
 
 void MainWindow::onStatusChanged(const QString &root, const StatusSnapshot &snapshot)
 {
-    if (root != workspace_->activeRoot()) {
+    if (root != repository_->activeRoot()) {
         return;
     }
     statusModel_->setSnapshot(snapshot);
@@ -297,7 +298,7 @@ void MainWindow::onStatusChanged(const QString &root, const StatusSnapshot &snap
 
 void MainWindow::updateBranchLabel(const StatusSnapshot &snapshot)
 {
-    if (workspace_->activeRoot().isEmpty()) {
+    if (repository_->activeRoot().isEmpty()) {
         branchLabel_->clear();
         return;
     }
@@ -305,8 +306,8 @@ void MainWindow::updateBranchLabel(const StatusSnapshot &snapshot)
         branchLabel_->setText(tr("Detached at %1 %2").arg(snapshot.headKind, snapshot.headName));
     } else if (!snapshot.branch.isEmpty()) {
         branchLabel_->setText(tr("Branch: %1").arg(snapshot.branch));
-    } else if (!workspace_->activeRepo().branch.isEmpty()) {
-        branchLabel_->setText(tr("Branch: %1").arg(workspace_->activeRepo().branch));
+    } else if (!repository_->activeRepo().branch.isEmpty()) {
+        branchLabel_->setText(tr("Branch: %1").arg(repository_->activeRepo().branch));
     } else {
         branchLabel_->clear();
     }
@@ -329,30 +330,30 @@ void MainWindow::updateCategoryFilter()
     categoryFilter_->setCurrentIndex(index >= 0 ? index : 0);
 }
 
-void MainWindow::selectActiveWorkspaceItem()
+void MainWindow::selectActiveRepositoryItem()
 {
-    const QString activeRoot = workspace_->activeRoot();
-    for (int row = 0; row < workspacesList_->count(); ++row) {
-        QListWidgetItem *item = workspacesList_->item(row);
+    const QString activeRoot = repository_->activeRoot();
+    for (int row = 0; row < repositoriesList_->count(); ++row) {
+        QListWidgetItem *item = repositoriesList_->item(row);
         if (item->data(Qt::UserRole).toString() == activeRoot && !activeRoot.isEmpty()) {
-            workspacesList_->setCurrentItem(item);
+            repositoriesList_->setCurrentItem(item);
             return;
         }
     }
-    workspacesList_->setCurrentItem(nullptr);
+    repositoriesList_->setCurrentItem(nullptr);
 }
 
-void MainWindow::promptForWorkspace()
+void MainWindow::promptForRepository()
 {
     QDialog dialog(this);
-    dialog.setWindowTitle(tr("Open Workspace"));
+    dialog.setWindowTitle(tr("Open Repository"));
     dialog.resize(520, 320);
 
     auto *layout = new QVBoxLayout(&dialog);
-    layout->addWidget(new QLabel(tr("Working copies registered with the daemon:"), &dialog));
+    layout->addWidget(new QLabel(tr("Repositories registered with the daemon:"), &dialog));
 
     auto *list = new QListWidget(&dialog);
-    for (const RepoInfo &repo : workspace_->repos()) {
+    for (const RepoInfo &repo : repository_->repos()) {
         const QString label = repo.branch.isEmpty() ? repo.root : tr("%1  [%2]").arg(repo.root, repo.branch);
         auto *item = new QListWidgetItem(label, list);
         item->setData(Qt::UserRole, repo.root);
@@ -376,20 +377,20 @@ void MainWindow::promptForWorkspace()
     if (result == QDialog::Accepted && list->currentItem() != nullptr) {
         selected = list->currentItem()->data(Qt::UserRole).toString();
     } else if (result == kBrowseResult) {
-        selected = QFileDialog::getExistingDirectory(this, tr("Select a nipa working copy"));
+        selected = QFileDialog::getExistingDirectory(this, tr("Select a nipa repository"));
     }
     if (!selected.isEmpty()) {
-        openWorkspace(selected);
+        openRepository(selected);
     }
 }
 
-void MainWindow::openWorkspace(const QString &root)
+void MainWindow::openRepository(const QString &root)
 {
     if (root.isEmpty()) {
         return;
     }
-    appendLog(tr("Opening workspace %1…").arg(root));
-    workspace_->open(root);
+    appendLog(tr("Opening repository %1…").arg(root));
+    repository_->open(root);
 }
 
 void MainWindow::reconnectToDaemon()

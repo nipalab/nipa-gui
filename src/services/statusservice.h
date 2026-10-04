@@ -7,16 +7,16 @@
 #include "daemon/daemontypes.h"
 
 class DaemonChannel;
-class WorkspaceService;
+class RepositoryService;
 
-/// Owns the status of the active workspace: fetches from the daemon's cached
+/// Owns the status of the active repository: fetches from the daemon's cached
 /// status (never rescans) and optionally polls so the pending view stays fresh
 /// without the UI ever blocking on a full working-copy scan.
 class StatusService : public QObject {
     Q_OBJECT
 
 public:
-    StatusService(DaemonChannel *channel, WorkspaceService *workspace, QObject *parent = nullptr);
+    StatusService(DaemonChannel *channel, RepositoryService *repository, QObject *parent = nullptr);
 
     QString root() const;
     StatusSnapshot snapshot() const;
@@ -35,7 +35,7 @@ signals:
 
 private:
     DaemonChannel *channel_;
-    WorkspaceService *workspace_;
+    RepositoryService *repository_;
     QTimer timer_;
     QString root_;
     StatusSnapshot snapshot_;

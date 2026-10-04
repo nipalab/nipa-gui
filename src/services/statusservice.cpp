@@ -1,21 +1,21 @@
 #include "statusservice.h"
 
 #include "daemon/daemonchannel.h"
-#include "workspaceservice.h"
+#include "repositoryservice.h"
 
 namespace {
 constexpr int kDefaultAutoRefreshIntervalMs = 5000;
 }
 
-StatusService::StatusService(DaemonChannel *channel, WorkspaceService *workspace, QObject *parent)
+StatusService::StatusService(DaemonChannel *channel, RepositoryService *repository, QObject *parent)
     : QObject(parent)
     , channel_(channel)
-    , workspace_(workspace)
+    , repository_(repository)
 {
     timer_.setInterval(kDefaultAutoRefreshIntervalMs);
     connect(&timer_, &QTimer::timeout, this, [this] { refresh(false); });
 
-    connect(workspace_, &WorkspaceService::activeRepoChanged, this, [this](const RepoInfo &repo) {
+    connect(repository_, &RepositoryService::activeRepoChanged, this, [this](const RepoInfo &repo) {
         if (repo.root == root_) {
             return;
         }

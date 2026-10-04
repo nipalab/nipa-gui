@@ -7,14 +7,14 @@
 
 class DaemonChannel;
 
-/// Tracks the daemon's registry of working copies and the workspace the UI has
-/// open. Selection is separate from transport so status polling always targets
-/// an explicitly watched root.
-class WorkspaceService : public QObject {
+/// Tracks the daemon's registry of repositories (working copies cloned with
+/// `.nipa/config`) and the one the UI has open. Selection is separate from
+/// transport so status polling always targets an explicitly watched root.
+class RepositoryService : public QObject {
     Q_OBJECT
 
 public:
-    explicit WorkspaceService(DaemonChannel *channel, QObject *parent = nullptr);
+    explicit RepositoryService(DaemonChannel *channel, QObject *parent = nullptr);
 
     QList<RepoInfo> repos() const;
     RepoInfo activeRepo() const;

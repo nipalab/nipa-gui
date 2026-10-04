@@ -42,10 +42,10 @@ add_library(nipa-gui-core STATIC
     src/daemon/daemontypes.h
     src/models/statusmodel.cpp
     src/models/statusmodel.h
+    src/services/repositoryservice.cpp
+    src/services/repositoryservice.h
     src/services/statusservice.cpp
     src/services/statusservice.h
-    src/services/workspaceservice.cpp
-    src/services/workspaceservice.h
     src/ui/mainwindow.cpp
     src/ui/mainwindow.h
 )

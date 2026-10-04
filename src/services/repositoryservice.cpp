@@ -1,8 +1,8 @@
-#include "workspaceservice.h"
+#include "repositoryservice.h"
 
 #include "daemon/daemonchannel.h"
 
-WorkspaceService::WorkspaceService(DaemonChannel *channel, QObject *parent)
+RepositoryService::RepositoryService(DaemonChannel *channel, QObject *parent)
     : QObject(parent)
     , channel_(channel)
 {
@@ -39,32 +39,32 @@ WorkspaceService::WorkspaceService(DaemonChannel *channel, QObject *parent)
             });
 }
 
-QList<RepoInfo> WorkspaceService::repos() const
+QList<RepoInfo> RepositoryService::repos() const
 {
     return repos_;
 }
 
-RepoInfo WorkspaceService::activeRepo() const
+RepoInfo RepositoryService::activeRepo() const
 {
     return activeRepo_;
 }
 
-QString WorkspaceService::activeRoot() const
+QString RepositoryService::activeRoot() const
 {
     return activeRepo_.root;
 }
 
-bool WorkspaceService::hasActiveRepo() const
+bool RepositoryService::hasActiveRepo() const
 {
     return !activeRepo_.root.isEmpty();
 }
 
-void WorkspaceService::refresh()
+void RepositoryService::refresh()
 {
     channel_->listRepos();
 }
 
-void WorkspaceService::open(const QString &root)
+void RepositoryService::open(const QString &root)
 {
     if (root.isEmpty()) {
         return;
@@ -72,7 +72,7 @@ void WorkspaceService::open(const QString &root)
     channel_->watchRepo(root);
 }
 
-void WorkspaceService::close()
+void RepositoryService::close()
 {
     if (activeRepo_.root.isEmpty()) {
         activeRepo_ = {};
