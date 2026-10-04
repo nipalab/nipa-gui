@@ -84,6 +84,17 @@ public:
                            bool noFf,
                            const QString &message);
 
+    /// Starts a streamed Revert of a commit or range, including the
+    /// continue/skip/abort resumption modes for conflicted reverts.
+    DaemonOperation *revert(const QString &root,
+                            const QString &target,
+                            bool abort,
+                            bool continueOp,
+                            bool skip,
+                            bool noCommit,
+                            int mainline,
+                            const QString &message);
+
     /// Numeric dotted version comparison (-1, 0, 1); tolerates a leading "v".
     static int compareVersions(const QString &a, const QString &b);
 
@@ -109,6 +120,18 @@ public slots:
     void fetchBranches(const QString &root);
     void createBranch(const QString &root, const QString &name, const QString &fromBranch);
     void deleteBranch(const QString &root, const QString &name);
+    void fetchMergeRequests(const QString &root, const QString &status, int limit);
+    void createMergeRequest(const QString &root,
+                            const QString &title,
+                            const QString &description,
+                            const QString &sourceBranch,
+                            const QString &targetBranch);
+    void mergeMergeRequest(const QString &root, qint64 number);
+    void closeMergeRequest(const QString &root, qint64 number);
+    void fetchMergeRequestReviews(const QString &root, qint64 number);
+    void fetchMergeRequestReviewState(const QString &root, qint64 number);
+    void fetchMergeRequestThreads(const QString &root, qint64 number);
+    void login(const QString &host, const QString &username, const QString &password);
 
 signals:
     void stateChanged(DaemonChannel::State state, const QString &detail);
@@ -148,6 +171,32 @@ signals:
                            const QString &root,
                            const QList<CommitInfo> &commits,
                            const QString &error);
+    void mergeRequestsFetched(bool ok,
+                              const QString &root,
+                              const QList<MergeRequestInfo> &mergeRequests,
+                              const QString &error);
+    void mergeRequestCreated(bool ok, const QString &root, const MergeRequestInfo &mergeRequest,
+                             const QString &error);
+    void mergeRequestMerged(bool ok, const QString &root, const MergeRequestInfo &mergeRequest,
+                            const QString &error);
+    void mergeRequestClosed(bool ok, const QString &root, const MergeRequestInfo &mergeRequest,
+                            const QString &error);
+    void mergeRequestReviewsFetched(bool ok,
+                                    const QString &root,
+                                    qint64 number,
+                                    const QList<ReviewInfo> &reviews,
+                                    const QString &error);
+    void mergeRequestReviewStateFetched(bool ok,
+                                        const QString &root,
+                                        qint64 number,
+                                        const ReviewStateInfo &state,
+                                        const QString &error);
+    void mergeRequestThreadsFetched(bool ok,
+                                    const QString &root,
+                                    qint64 number,
+                                    const QList<ReviewThreadInfo> &threads,
+                                    const QString &error);
+    void loginFinished(bool ok, const QString &error);
 
 private:
     void tryConnect();

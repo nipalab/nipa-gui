@@ -158,7 +158,17 @@ void OperationProgressDialog::onFinished(const OperationResult &result)
         }
         break;
     case OperationResult::Revert:
-        resultSummary_ = tr("Revert completed");
+        if (!result.revert.conflicts.isEmpty()) {
+            resultSummary_ = tr("Revert left %n conflict(s)", "", result.revert.conflicts.size());
+        } else if (result.revert.aborted) {
+            resultSummary_ = tr("Revert aborted");
+        } else if (result.revert.skipped) {
+            resultSummary_ = tr("Revert step skipped");
+        } else if (result.revert.noChange) {
+            resultSummary_ = tr("Nothing to revert");
+        } else {
+            resultSummary_ = tr("Revert committed");
+        }
         break;
     }
     accept();

@@ -69,6 +69,10 @@ private slots:
     void switchOperation();
     void mergeOperationWithConflicts();
     void commitWalkParses();
+    void mergeRequestsFlow();
+    void reviewsStateAndThreads();
+    void revertOperationWithResume();
+    void loginFlow();
     void reconnectsAfterDaemonAppears();
     void versionComparison();
 };
@@ -815,6 +819,194 @@ void DaemonChannelTest::commitWalkParses()
     const auto &sent = fixture.daemon->service().commitWalkRequests[0].request();
     QCOMPARE(QString::fromStdString(sent.start_commit_id()), QStringLiteral("m1"));
     QCOMPARE(sent.limit(), 200);
+}
+
+void DaemonChannelTest::mergeRequestsFlow()
+{
+    auto fixture = makeConnectedFixture();
+    QVERIFY(fixture.channel->isConnected());
+
+    greet::ListMergeRequestsResponse list;
+    auto *mergeRequest = list.add_merge_requests();
+    mergeRequest->set_id("mr-1");
+    mergeRequest->set_number(1);
+    mergeRequest->set_source_branch("feature");
+    mergeRequest->set_target_branch("main");
+    mergeRequest->set_title("Add feature");
+    mergeRequest->set_status("open");
+    mergeRequest->set_created_by("u1");
+    mergeRequest->mutable_created_at()->set_seconds(1700000000);
+    fixture.daemon->service().mergeRequestLists["/work/assets"] = list;
+
+    QSignalSpy listSpy(fixture.channel.get(), &DaemonChannel::mergeRequestsFetched);
+    fixture.channel->fetchMergeRequests("/work/assets", QStringLiteral("open"), 100);
+    QTRY_COMPARE(listSpy.count(), 1);
+    QVERIFY(listSpy.last().at(0).toBool());
+
+    const QList<MergeRequestInfo> mergeRequests = listSpy.last().at(2).value<QList<MergeRequestInfo>>();
+    QCOMPARE(mergeRequests.size(), 1);
+    QCOMPARE(mergeRequests.first().number, qint64(1));
+    QCOMPARE(mergeRequests.first().title, QStringLiteral("Add feature"));
+    QCOMPARE(mergeRequests.first().status, QStringLiteral("open"));
+    QVERIFY(mergeRequests.first().createdAt.isValid());
+
+    QCOMPARE(fixture.daemon->service().mrListRequests.size(), std::size_t(1));
+    QCOMPARE(QString::fromStdString(fixture.daemon->service().mrListRequests[0].request().status()),
+             QStringLiteral("open"));
+    QCOMPARE(fixture.daemon->service().mrListRequests[0].request().limit(), 100);
+
+    QSignalSpy createSpy(fixture.channel.get(), &DaemonChannel::mergeRequestCreated);
+    fixture.channel->createMergeRequest("/work/assets", QStringLiteral("New MR"),
+                                        QStringLiteral("desc"), QStringLiteral("feature"),
+                                        QStringLiteral("main"));
+    QTRY_COMPARE(createSpy.count(), 1);
+    QVERIFY(createSpy.last().at(0).toBool());
+    QCOMPARE(createSpy.last().at(2).value<MergeRequestInfo>().number, qint64(2));
+    QCOMPARE(fixture.daemon->service().mrCreateRequests.size(), std::size_t(1));
+
+    QSignalSpy mergeSpy(fixture.channel.get(), &DaemonChannel::mergeRequestMerged);
+    fixture.channel->mergeMergeRequest("/work/assets", 1);
+    QTRY_COMPARE(mergeSpy.count(), 1);
+    QVERIFY(mergeSpy.last().at(0).toBool());
+    QCOMPARE(mergeSpy.last().at(2).value<MergeRequestInfo>().status, QStringLiteral("merged"));
+    QCOMPARE(fixture.daemon->service().mrMergeRequests.size(), std::size_t(1));
+
+    QSignalSpy closeSpy(fixture.channel.get(), &DaemonChannel::mergeRequestClosed);
+    fixture.channel->closeMergeRequest("/work/assets", 2);
+    QTRY_COMPARE(closeSpy.count(), 1);
+    QVERIFY(closeSpy.last().at(0).toBool());
+    QCOMPARE(closeSpy.last().at(2).value<MergeRequestInfo>().status, QStringLiteral("closed"));
+    QCOMPARE(fixture.daemon->service().mrCloseRequests.size(), std::size_t(1));
+}
+
+void DaemonChannelTest::reviewsStateAndThreads()
+{
+    auto fixture = makeConnectedFixture();
+    QVERIFY(fixture.channel->isConnected());
+
+    greet::ListMergeRequestReviewsResponse reviews;
+    auto *review = reviews.add_reviews();
+    review->set_id("r1");
+    review->set_state("approved");
+    review->set_body("lgtm");
+    review->mutable_reviewer()->set_user_id("u2");
+    review->mutable_reviewer()->set_name("Maya");
+    fixture.daemon->service().mergeRequestReviews[1] = reviews;
+
+    greet::GetMergeRequestReviewStateResponse state;
+    state.mutable_state()->set_approvals(1);
+    state.mutable_state()->set_changes_requested(0);
+    state.mutable_state()->add_outstanding_reviewers("u3");
+    fixture.daemon->service().mergeRequestReviewStates[1] = state;
+
+    greet::ListMergeRequestThreadsResponse threads;
+    auto *thread = threads.add_threads();
+    thread->set_id("t1");
+    thread->set_file_path("a.png");
+    thread->set_new_line(3);
+    thread->set_side("right");
+    thread->mutable_created_by()->set_name("Ada");
+    auto *comment = thread->add_comments();
+    comment->set_id("c1");
+    comment->mutable_user()->set_name("Ada");
+    comment->set_body("why?");
+    fixture.daemon->service().mergeRequestThreads[1] = threads;
+
+    QSignalSpy reviewsSpy(fixture.channel.get(), &DaemonChannel::mergeRequestReviewsFetched);
+    QSignalSpy stateSpy(fixture.channel.get(), &DaemonChannel::mergeRequestReviewStateFetched);
+    QSignalSpy threadsSpy(fixture.channel.get(), &DaemonChannel::mergeRequestThreadsFetched);
+
+    fixture.channel->fetchMergeRequestReviews("/work/assets", 1);
+    fixture.channel->fetchMergeRequestReviewState("/work/assets", 1);
+    fixture.channel->fetchMergeRequestThreads("/work/assets", 1);
+    QTRY_COMPARE(reviewsSpy.count(), 1);
+    QTRY_COMPARE(stateSpy.count(), 1);
+    QTRY_COMPARE(threadsSpy.count(), 1);
+
+    const QList<ReviewInfo> fetchedReviews = reviewsSpy.last().at(3).value<QList<ReviewInfo>>();
+    QCOMPARE(fetchedReviews.size(), 1);
+    QCOMPARE(fetchedReviews.first().state, QStringLiteral("approved"));
+    QCOMPARE(fetchedReviews.first().reviewer.name, QStringLiteral("Maya"));
+
+    const ReviewStateInfo fetchedState = stateSpy.last().at(3).value<ReviewStateInfo>();
+    QCOMPARE(fetchedState.approvals, 1);
+    QCOMPARE(fetchedState.outstandingReviewers, QStringList{QStringLiteral("u3")});
+
+    const QList<ReviewThreadInfo> fetchedThreads = threadsSpy.last().at(3).value<QList<ReviewThreadInfo>>();
+    QCOMPARE(fetchedThreads.size(), 1);
+    QCOMPARE(fetchedThreads.first().filePath, QStringLiteral("a.png"));
+    QVERIFY(fetchedThreads.first().hasNewLine);
+    QCOMPARE(fetchedThreads.first().newLine, qint64(3));
+    QCOMPARE(fetchedThreads.first().comments.size(), 1);
+    QCOMPARE(fetchedThreads.first().comments.first().body, QStringLiteral("why?"));
+
+    QCOMPARE(fixture.daemon->service().mrReviewsRequests.size(), std::size_t(1));
+    QCOMPARE(fixture.daemon->service().mrReviewStateRequests.size(), std::size_t(1));
+    QCOMPARE(fixture.daemon->service().mrThreadsRequests.size(), std::size_t(1));
+}
+
+void DaemonChannelTest::revertOperationWithResume()
+{
+    auto fixture = makeConnectedFixture();
+    QVERIFY(fixture.channel->isConnected());
+
+    fixture.daemon->service().revertConflicts = {"a.txt"};
+
+    DaemonOperation *operation = fixture.channel->revert(
+        "/work/assets", QStringLiteral("c1"), false, false, false, false, 0, QStringLiteral("revert it"));
+    QSignalSpy finishedSpy(operation, &DaemonOperation::finished);
+    QTRY_COMPARE(finishedSpy.count(), 1);
+
+    const OperationResult result = finishedSpy.last().at(0).value<OperationResult>();
+    QVERIFY(result.kind == OperationResult::Revert);
+    QCOMPARE(result.revert.conflicts.size(), 1);
+    QCOMPARE(result.revert.conflicts.first(), QStringLiteral("a.txt"));
+
+    QCOMPARE(fixture.daemon->service().revertRequests.size(), std::size_t(1));
+    const nipadaemon::RevertOpRequest &sent = fixture.daemon->service().revertRequests[0];
+    QCOMPARE(QString::fromStdString(sent.target()), QStringLiteral("c1"));
+    QVERIFY(!sent.abort());
+    QVERIFY(!sent.continue_());
+    QVERIFY(!sent.skip());
+    QVERIFY(!sent.no_commit());
+    QCOMPARE(QString::fromStdString(sent.message()), QStringLiteral("revert it"));
+
+    fixture.daemon->service().revertConflicts.clear();
+    fixture.daemon->service().revertCommitted = true;
+    DaemonOperation *continueOperation = fixture.channel->revert(
+        "/work/assets", QStringLiteral("c1"), false, true, false, false, 0, QString());
+    QSignalSpy continueSpy(continueOperation, &DaemonOperation::finished);
+    QTRY_COMPARE(continueSpy.count(), 1);
+    const OperationResult continued = continueSpy.last().at(0).value<OperationResult>();
+    QVERIFY(continued.revert.committed);
+    QVERIFY(fixture.daemon->service().revertRequests[1].continue_());
+}
+
+void DaemonChannelTest::loginFlow()
+{
+    auto fixture = makeConnectedFixture();
+    QVERIFY(fixture.channel->isConnected());
+
+    QSignalSpy spy(fixture.channel.get(), &DaemonChannel::loginFinished);
+    fixture.channel->login(QStringLiteral("nipa.example.com"), QStringLiteral("ada"),
+                           QStringLiteral("secret"));
+    QTRY_COMPARE(spy.count(), 1);
+    QVERIFY(spy.last().at(0).toBool());
+    QCOMPARE(fixture.daemon->service().loginRequests.size(), std::size_t(1));
+    QCOMPARE(QString::fromStdString(fixture.daemon->service().loginRequests[0].host()),
+             QStringLiteral("nipa.example.com"));
+    QCOMPARE(QString::fromStdString(fixture.daemon->service().loginRequests[0].username()),
+             QStringLiteral("ada"));
+    QCOMPARE(QString::fromStdString(fixture.daemon->service().loginRequests[0].password()),
+             QStringLiteral("secret"));
+
+    fixture.daemon->service().loginShouldFail = true;
+    spy.clear();
+    fixture.channel->login(QStringLiteral("nipa.example.com"), QStringLiteral("ada"),
+                           QStringLiteral("wrong"));
+    QTRY_COMPARE(spy.count(), 1);
+    QVERIFY(!spy.last().at(0).toBool());
+    QVERIFY(spy.last().at(1).toString().contains(QStringLiteral("invalid credentials")));
 }
 
 void DaemonChannelTest::reconnectsAfterDaemonAppears()

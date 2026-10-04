@@ -3,17 +3,21 @@
 #include "branchdialogs.h"
 #include "daemon/daemonoperation.h"
 #include "diffview.h"
+#include "logindialog.h"
 #include "models/branchmodel.h"
 #include "models/commitlogmodel.h"
 #include "models/locksmodel.h"
+#include "models/mergerequestmodel.h"
 #include "models/repositorytreemodel.h"
 #include "models/revisiongraphmodel.h"
 #include "models/statusmodel.h"
+#include "mrdialogs.h"
 #include "operationprogressdialog.h"
 #include "services/branchservice.h"
 #include "services/graphservice.h"
 #include "services/historyservice.h"
 #include "services/lockservice.h"
+#include "services/mergerequestservice.h"
 #include "services/repositoryservice.h"
 #include "services/statusservice.h"
 #include "submitdialog.h"
@@ -62,6 +66,7 @@ MainWindow::MainWindow(QWidget *parent, QString daemonConfigPath, bool autoSpawn
     locksModel_ = new LocksModel(this);
     branchModel_ = new BranchModel(this);
     graphModel_ = new RevisionGraphModel(this);
+    mergeRequestModel_ = new MergeRequestModel(this);
 
     buildUi();
     buildActions();
@@ -74,6 +79,7 @@ MainWindow::MainWindow(QWidget *parent, QString daemonConfigPath, bool autoSpawn
     locks_ = new LockService(channel_, repository_, this);
     branches_ = new BranchService(channel_, repository_, this);
     graph_ = new GraphService(channel_, repository_, branches_, this);
+    mergeRequests_ = new MergeRequestService(channel_, repository_, this);
 
     connect(channel_, &DaemonChannel::stateChanged, this, &MainWindow::onStateChanged);
     connect(channel_, &DaemonChannel::connected, this, &MainWindow::onConnected);
@@ -84,6 +90,15 @@ MainWindow::MainWindow(QWidget *parent, QString daemonConfigPath, bool autoSpawn
                 appendLog(tr("Warning: daemon %1 is older than the required %2")
                               .arg(daemonVersion, minimumVersion));
             });
+    connect(channel_, &DaemonChannel::loginFinished, this, [this](bool ok, const QString &error) {
+        if (ok) {
+            appendLog(tr("Logged in to the server"));
+            statusBar()->showMessage(tr("Logged in"), 5000);
+        } else {
+            appendLog(tr("Login failed: %1").arg(error));
+            QMessageBox::warning(this, tr("Login"), error);
+        }
+    });
 
     connect(repository_, &RepositoryService::reposChanged, this, &MainWindow::onReposChanged);
     connect(repository_, &RepositoryService::activeRepoChanged, this, &MainWindow::onActiveRepoChanged);
@@ -124,6 +139,35 @@ MainWindow::MainWindow(QWidget *parent, QString daemonConfigPath, bool autoSpawn
         appendLog(tr("Graph error: %1").arg(message));
     });
 
+    connect(mergeRequests_, &MergeRequestService::mergeRequestsChanged, this,
+            &MainWindow::onMergeRequestsChanged);
+    connect(mergeRequests_, &MergeRequestService::selectionChanged, this,
+            &MainWindow::onMergeRequestSelectionChanged);
+    connect(mergeRequests_, &MergeRequestService::reviewsChanged, this,
+            &MainWindow::onMergeRequestReviewsChanged);
+    connect(mergeRequests_, &MergeRequestService::threadsChanged, this,
+            &MainWindow::onMergeRequestThreadsChanged);
+    connect(mergeRequests_, &MergeRequestService::mergeRequestCreated, this,
+            [this](const MergeRequestInfo &mergeRequest) {
+                appendLog(tr("Opened merge request #%1: %2")
+                              .arg(mergeRequest.number)
+                              .arg(mergeRequest.title));
+            });
+    connect(mergeRequests_, &MergeRequestService::mergeRequestMerged, this,
+            [this](const MergeRequestInfo &mergeRequest) {
+                appendLog(tr("Merged merge request #%1").arg(mergeRequest.number));
+                refreshWorkspace();
+            });
+    connect(mergeRequests_, &MergeRequestService::mergeRequestClosed, this,
+            [this](const MergeRequestInfo &mergeRequest) {
+                appendLog(tr("Closed merge request #%1").arg(mergeRequest.number));
+            });
+    connect(mergeRequests_, &MergeRequestService::errorOccurred, this,
+            [this](const QString &message) {
+                appendLog(tr("Merge request error: %1").arg(message));
+                statusBar()->showMessage(tr("Merge request error: %1").arg(message), 5000);
+            });
+
     channel_->start();
 }
 
@@ -140,11 +184,13 @@ void MainWindow::buildUi()
     historyPage_ = buildHistoryPage();
     graphPage_ = buildGraphPage();
     branchesPage_ = buildBranchesPage();
+    mergeRequestPage_ = buildMergeRequestPage();
     diffPage_ = buildDiffPage();
     locksPage_ = buildLocksPage();
     centralTabs_->addTab(historyPage_, tr("History"));
     centralTabs_->addTab(graphPage_, tr("Graph"));
     centralTabs_->addTab(branchesPage_, tr("Branches"));
+    centralTabs_->addTab(mergeRequestPage_, tr("Merge Requests"));
     centralTabs_->addTab(diffPage_, tr("Diff"));
     centralTabs_->addTab(locksPage_, tr("Locks"));
     setCentralWidget(centralTabs_);
@@ -434,6 +480,111 @@ QWidget *MainWindow::buildGraphPage()
     return page;
 }
 
+QWidget *MainWindow::buildMergeRequestPage()
+{
+    auto *page = new QWidget(this);
+    auto *layout = new QHBoxLayout(page);
+    layout->setContentsMargins(6, 6, 6, 6);
+
+    auto *splitter = new QSplitter(Qt::Horizontal, page);
+
+    auto *left = new QWidget(splitter);
+    auto *leftLayout = new QVBoxLayout(left);
+    leftLayout->setContentsMargins(0, 0, 0, 0);
+
+    auto *toolbar = new QHBoxLayout();
+    mergeRequestFilterCombo_ = new QComboBox(left);
+    mergeRequestFilterCombo_->setObjectName(QStringLiteral("mergeRequestFilterCombo"));
+    mergeRequestFilterCombo_->addItem(tr("Open"), QStringLiteral("open"));
+    mergeRequestFilterCombo_->addItem(tr("Merged"), QStringLiteral("merged"));
+    mergeRequestFilterCombo_->addItem(tr("Closed"), QStringLiteral("closed"));
+    mergeRequestFilterCombo_->addItem(tr("All"), QString());
+    refreshMergeRequestsButton_ = new QPushButton(tr("Refresh"), left);
+    refreshMergeRequestsButton_->setObjectName(QStringLiteral("refreshMergeRequestsButton"));
+    newMergeRequestButton_ = new QPushButton(tr("New…"), left);
+    newMergeRequestButton_->setObjectName(QStringLiteral("newMergeRequestButton"));
+    mergeMergeRequestButton_ = new QPushButton(tr("Merge"), left);
+    mergeMergeRequestButton_->setObjectName(QStringLiteral("mergeMergeRequestButton"));
+    mergeMergeRequestButton_->setEnabled(false);
+    closeMergeRequestButton_ = new QPushButton(tr("Close"), left);
+    closeMergeRequestButton_->setObjectName(QStringLiteral("closeMergeRequestButton"));
+    closeMergeRequestButton_->setEnabled(false);
+    toolbar->addWidget(mergeRequestFilterCombo_);
+    toolbar->addWidget(refreshMergeRequestsButton_);
+    toolbar->addWidget(newMergeRequestButton_);
+    toolbar->addWidget(mergeMergeRequestButton_);
+    toolbar->addWidget(closeMergeRequestButton_);
+    toolbar->addStretch();
+
+    mergeRequestTable_ = new QTableView(left);
+    mergeRequestTable_->setObjectName(QStringLiteral("mergeRequestTable"));
+    mergeRequestTable_->setModel(mergeRequestModel_);
+    mergeRequestTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
+    mergeRequestTable_->setSelectionMode(QAbstractItemView::SingleSelection);
+    mergeRequestTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    mergeRequestTable_->setShowGrid(false);
+    mergeRequestTable_->setAlternatingRowColors(true);
+    mergeRequestTable_->verticalHeader()->setVisible(false);
+    mergeRequestTable_->horizontalHeader()->setStretchLastSection(true);
+    mergeRequestTable_->horizontalHeader()->setSectionResizeMode(MergeRequestModel::NumberColumn,
+                                                                QHeaderView::ResizeToContents);
+    mergeRequestTable_->horizontalHeader()->setSectionResizeMode(MergeRequestModel::StatusColumn,
+                                                                QHeaderView::ResizeToContents);
+
+    leftLayout->addLayout(toolbar);
+    leftLayout->addWidget(mergeRequestTable_, 1);
+
+    auto *right = new QWidget(splitter);
+    auto *rightLayout = new QVBoxLayout(right);
+    rightLayout->setContentsMargins(0, 0, 0, 0);
+    mergeRequestDetailLabel_ = new QLabel(tr("Select a merge request"), right);
+    mergeRequestDetailLabel_->setObjectName(QStringLiteral("mergeRequestDetailLabel"));
+    mergeRequestDetailLabel_->setWordWrap(true);
+    mergeRequestDetailLabel_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+
+    auto *detailSplitter = new QSplitter(Qt::Vertical, right);
+    mergeRequestReviewsEdit_ = new QPlainTextEdit(detailSplitter);
+    mergeRequestReviewsEdit_->setObjectName(QStringLiteral("mergeRequestReviewsEdit"));
+    mergeRequestReviewsEdit_->setReadOnly(true);
+    mergeRequestReviewsEdit_->setPlaceholderText(tr("Reviews"));
+    mergeRequestThreadsEdit_ = new QPlainTextEdit(detailSplitter);
+    mergeRequestThreadsEdit_->setObjectName(QStringLiteral("mergeRequestThreadsEdit"));
+    mergeRequestThreadsEdit_->setReadOnly(true);
+    mergeRequestThreadsEdit_->setPlaceholderText(
+        tr("Discussion threads (read-only: the daemon exposes no comment writes yet)"));
+    detailSplitter->addWidget(mergeRequestReviewsEdit_);
+    detailSplitter->addWidget(mergeRequestThreadsEdit_);
+
+    rightLayout->addWidget(mergeRequestDetailLabel_);
+    rightLayout->addWidget(detailSplitter, 1);
+
+    splitter->addWidget(left);
+    splitter->addWidget(right);
+    splitter->setStretchFactor(0, 3);
+    splitter->setStretchFactor(1, 2);
+    layout->addWidget(splitter);
+
+    connect(mergeRequestFilterCombo_, &QComboBox::currentIndexChanged, this, [this](int index) {
+        mergeRequests_->setStatusFilter(mergeRequestFilterCombo_->itemData(index).toString());
+    });
+    connect(refreshMergeRequestsButton_, &QPushButton::clicked, this,
+            [this] { mergeRequests_->refresh(); });
+    connect(newMergeRequestButton_, &QPushButton::clicked, this,
+            &MainWindow::promptCreateMergeRequest);
+    connect(mergeMergeRequestButton_, &QPushButton::clicked, this,
+            &MainWindow::mergeSelectedMergeRequest);
+    connect(closeMergeRequestButton_, &QPushButton::clicked, this,
+            &MainWindow::closeSelectedMergeRequest);
+    connect(mergeRequestTable_->selectionModel(), &QItemSelectionModel::selectionChanged, this,
+            [this] {
+                const QModelIndexList rows = mergeRequestTable_->selectionModel()->selectedRows();
+                if (!rows.isEmpty()) {
+                    mergeRequests_->select(mergeRequestModel_->numberAt(rows.first().row()));
+                }
+            });
+    return page;
+}
+
 QWidget *MainWindow::buildDiffPage()
 {
     auto *page = new QWidget(this);
@@ -580,6 +731,14 @@ void MainWindow::buildActions()
     mergeAction_->setObjectName(QStringLiteral("mergeAction"));
     connect(mergeAction_, &QAction::triggered, this, &MainWindow::promptMerge);
 
+    revertAction_ = new QAction(tr("&Revert…"), this);
+    revertAction_->setObjectName(QStringLiteral("revertAction"));
+    connect(revertAction_, &QAction::triggered, this, &MainWindow::promptRevert);
+
+    loginAction_ = new QAction(tr("&Login…"), this);
+    loginAction_->setObjectName(QStringLiteral("loginAction"));
+    connect(loginAction_, &QAction::triggered, this, &MainWindow::promptLogin);
+
     submitAction_ = new QAction(tr("&Submit…"), this);
     submitAction_->setObjectName(QStringLiteral("submitAction"));
     connect(submitAction_, &QAction::triggered, this, &MainWindow::submit);
@@ -600,6 +759,7 @@ void MainWindow::buildActions()
     toolBar->setObjectName(QStringLiteral("mainToolBar"));
     toolBar->addAction(updateAction_);
     toolBar->addAction(mergeAction_);
+    toolBar->addAction(revertAction_);
     toolBar->addAction(submitAction_);
     toolBar->addSeparator();
     toolBar->addAction(stageAction_);
@@ -618,10 +778,12 @@ void MainWindow::buildActions()
 
     auto *daemonMenu = menuBar()->addMenu(tr("&Daemon"));
     daemonMenu->addAction(reconnectAction_);
+    daemonMenu->addAction(loginAction_);
 
     auto *actionsMenu = menuBar()->addMenu(tr("&Actions"));
     actionsMenu->addAction(updateAction_);
     actionsMenu->addAction(mergeAction_);
+    actionsMenu->addAction(revertAction_);
     actionsMenu->addAction(submitAction_);
     actionsMenu->addSeparator();
     actionsMenu->addAction(stageAction_);
@@ -639,6 +801,7 @@ void MainWindow::buildActions()
     unstageAction_->setEnabled(false);
     diffAction_->setEnabled(false);
     mergeAction_->setEnabled(false);
+    revertAction_->setEnabled(false);
 }
 
 void MainWindow::appendLog(const QString &message)
@@ -683,7 +846,11 @@ void MainWindow::onReposChanged(const QList<RepoInfo> &repos)
     for (const RepoInfo &repo : repos) {
         auto *item = new QListWidgetItem(repo.root, repositoriesList_);
         item->setData(Qt::UserRole, repo.root);
-        item->setToolTip(tr("%1\nbranch: %2").arg(repo.url, repo.branch));
+        QString tip = tr("%1\nbranch: %2").arg(repo.url, repo.branch);
+        if (!repo.sparse.isEmpty()) {
+            tip += tr("\nsparse: %1").arg(repo.sparse.join(QStringLiteral(", ")));
+        }
+        item->setToolTip(tip);
     }
     selectActiveRepositoryItem();
     appendLog(repos.size() == 1 ? tr("1 repository registered with the daemon")
@@ -704,6 +871,7 @@ void MainWindow::onActiveRepoChanged(const RepoInfo &repo)
         submitAction_->setEnabled(false);
         diffAction_->setEnabled(false);
         mergeAction_->setEnabled(false);
+        revertAction_->setEnabled(false);
         if (currentDiff_ != nullptr) {
             currentDiff_->cancel();
             currentDiff_ = nullptr;
@@ -724,8 +892,12 @@ void MainWindow::onActiveRepoChanged(const RepoInfo &repo)
     refreshAction_->setEnabled(true);
     updateAction_->setEnabled(true);
     submitAction_->setEnabled(false);
+    revertAction_->setEnabled(true);
     selectActiveRepositoryItem();
     appendLog(tr("Opened repository %1").arg(repo.root));
+    if (!repo.sparse.isEmpty()) {
+        appendLog(tr("Sparse checkout: %1").arg(repo.sparse.join(QStringLiteral(", "))));
+    }
 }
 
 void MainWindow::onStatusChanged(const QString &root, const StatusSnapshot &snapshot)
@@ -1470,6 +1642,224 @@ void MainWindow::handleMergeConflicts(const QString &sourceBranch, const QString
                                      QString()),
                      tr("Abort Merge"));
     }
+}
+
+void MainWindow::onMergeRequestsChanged(const QList<MergeRequestInfo> &mergeRequests)
+{
+    mergeRequestModel_->setMergeRequests(mergeRequests);
+    const int index = centralTabs_->indexOf(mergeRequestPage_);
+    if (index >= 0) {
+        centralTabs_->setTabText(
+            index, mergeRequests.isEmpty() ? tr("Merge Requests")
+                                           : tr("Merge Requests (%1)").arg(mergeRequests.size()));
+    }
+}
+
+void MainWindow::onMergeRequestSelectionChanged(const MergeRequestInfo &mergeRequest)
+{
+    if (mergeRequest.number <= 0) {
+        mergeRequestDetailLabel_->setText(tr("Select a merge request"));
+        mergeMergeRequestButton_->setEnabled(false);
+        closeMergeRequestButton_->setEnabled(false);
+        return;
+    }
+    mergeRequestDetailLabel_->setText(
+        tr("#%1 %2\n%3 → %4\nStatus: %5\nCreated by: %6\n\n%7")
+            .arg(mergeRequest.number)
+            .arg(mergeRequest.title, mergeRequest.sourceBranch, mergeRequest.targetBranch,
+                 mergeRequest.status, mergeRequest.createdBy, mergeRequest.description));
+    const bool isOpen = mergeRequest.status == QLatin1String("open");
+    mergeMergeRequestButton_->setEnabled(isOpen);
+    closeMergeRequestButton_->setEnabled(isOpen);
+
+    const int row = mergeRequestModel_->rowForNumber(mergeRequest.number);
+    if (row >= 0 && mergeRequestTable_->selectionModel() != nullptr
+        && mergeRequestTable_->selectionModel()->selectedRows().isEmpty()) {
+        mergeRequestTable_->selectRow(row);
+    }
+}
+
+void MainWindow::onMergeRequestReviewsChanged(const QList<ReviewInfo> &reviews,
+                                              const ReviewStateInfo &state)
+{
+    QStringList lines;
+    lines.append(tr("Approvals: %1 · Changes requested: %2 · Dismissed approvals: %3")
+                     .arg(state.approvals)
+                     .arg(state.changesRequested)
+                     .arg(state.dismissedApprovals));
+    if (!state.outstandingReviewers.isEmpty()) {
+        lines.append(tr("Outstanding reviewers: %1").arg(state.outstandingReviewers.join(QStringLiteral(", "))));
+    }
+    lines.append(QString());
+    if (reviews.isEmpty()) {
+        lines.append(tr("No reviews submitted."));
+    } else {
+        for (const ReviewInfo &review : reviews) {
+            const QString reviewer =
+                review.reviewer.name.isEmpty() ? review.reviewer.userId : review.reviewer.name;
+            lines.append(tr("%1 — %2%3")
+                             .arg(reviewer, review.state,
+                                  review.stale ? tr(" (stale)") : QString()));
+            if (!review.body.isEmpty()) {
+                lines.append(QStringLiteral("    ") + review.body);
+            }
+        }
+    }
+    mergeRequestReviewsEdit_->setPlainText(lines.join(QLatin1Char('\n')));
+}
+
+void MainWindow::onMergeRequestThreadsChanged(const QList<ReviewThreadInfo> &threads)
+{
+    QStringList lines;
+    if (threads.isEmpty()) {
+        lines.append(tr("No discussion threads."));
+    }
+    for (const ReviewThreadInfo &thread : threads) {
+        QString location = thread.filePath.isEmpty() ? tr("(top-level)") : thread.filePath;
+        if (thread.hasNewLine) {
+            location += tr(":%1").arg(thread.newLine);
+        } else if (thread.hasOldLine) {
+            location += tr(":%1 (old)").arg(thread.oldLine);
+        }
+        QStringList flags;
+        if (thread.resolved) {
+            flags.append(tr("resolved"));
+        }
+        if (thread.outdated) {
+            flags.append(tr("outdated"));
+        }
+        lines.append(tr("● %1%2")
+                         .arg(location, flags.isEmpty() ? QString()
+                                                        : tr(" [%1]").arg(flags.join(QStringLiteral(", ")))));
+        for (const ReviewCommentInfo &comment : thread.comments) {
+            const QString author =
+                comment.user.name.isEmpty() ? comment.user.userId : comment.user.name;
+            lines.append(tr("    %1: %2").arg(author, comment.body));
+        }
+        lines.append(QString());
+    }
+    mergeRequestThreadsEdit_->setPlainText(lines.join(QLatin1Char('\n')));
+}
+
+void MainWindow::promptCreateMergeRequest()
+{
+    if (!repository_->hasActiveRepo()) {
+        return;
+    }
+    CreateMergeRequestDialog dialog(branches_->branches(), branches_->activeBranchName(), this);
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+    mergeRequests_->create(dialog.title(), dialog.description(), dialog.sourceBranch(),
+                           dialog.targetBranch());
+}
+
+void MainWindow::mergeSelectedMergeRequest()
+{
+    const MergeRequestInfo mergeRequest = mergeRequests_->selectedMergeRequest();
+    if (mergeRequest.number <= 0 || mergeRequest.status != QLatin1String("open")) {
+        return;
+    }
+    const auto answer = QMessageBox::question(
+        this, tr("Merge Request"),
+        tr("Merge #%1 (%2 → %3)?").arg(mergeRequest.number).arg(mergeRequest.sourceBranch,
+                                                               mergeRequest.targetBranch),
+        QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+    if (answer == QMessageBox::Yes) {
+        mergeRequests_->mergeSelected();
+    }
+}
+
+void MainWindow::closeSelectedMergeRequest()
+{
+    const MergeRequestInfo mergeRequest = mergeRequests_->selectedMergeRequest();
+    if (mergeRequest.number <= 0 || mergeRequest.status != QLatin1String("open")) {
+        return;
+    }
+    const auto answer = QMessageBox::question(
+        this, tr("Close Merge Request"),
+        tr("Close #%1 without merging?").arg(mergeRequest.number), QMessageBox::Yes | QMessageBox::No,
+        QMessageBox::No);
+    if (answer == QMessageBox::Yes) {
+        mergeRequests_->closeSelected();
+    }
+}
+
+void MainWindow::promptRevert()
+{
+    if (!repository_->hasActiveRepo()) {
+        return;
+    }
+    RevertDialog dialog(history_->selectedCommit().id, this);
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+    runRevert(dialog.target(), dialog.mainline(), dialog.noCommit(), dialog.message(), false, false,
+              false);
+}
+
+void MainWindow::runRevert(const QString &target,
+                           int mainline,
+                           bool noCommit,
+                           const QString &message,
+                           bool abort,
+                           bool continueOp,
+                           bool skip)
+{
+    if (!repository_->hasActiveRepo() || target.isEmpty()) {
+        return;
+    }
+    QString title = tr("Revert %1").arg(target);
+    if (abort) {
+        title = tr("Abort Revert");
+    } else if (continueOp) {
+        title = tr("Continue Revert");
+    } else if (skip) {
+        title = tr("Skip Revert");
+    }
+
+    OperationResult result;
+    if (!runOperation(channel_->revert(repository_->activeRoot(), target, abort, continueOp, skip,
+                                       noCommit, mainline, message),
+                      title, &result)) {
+        return;
+    }
+    if (abort || result.revert.aborted || result.revert.conflicts.isEmpty()) {
+        return;
+    }
+
+    QMessageBox box(this);
+    box.setWindowTitle(tr("Revert Conflicts"));
+    box.setIcon(QMessageBox::Warning);
+    box.setText(tr("The revert left %n conflicted file(s).", "", result.revert.conflicts.size()));
+    box.setInformativeText(tr("Resolve the files, then continue. Skipping keeps them as they are."));
+    box.setDetailedText(result.revert.conflicts.join(QLatin1Char('\n')));
+    QPushButton *continueButton = box.addButton(tr("Continue"), QMessageBox::AcceptRole);
+    QPushButton *skipButton = box.addButton(tr("Skip"), QMessageBox::ActionRole);
+    QPushButton *abortButton = box.addButton(tr("Abort"), QMessageBox::DestructiveRole);
+    box.exec();
+    if (box.clickedButton() == continueButton) {
+        runRevert(target, mainline, noCommit, message, false, true, false);
+    } else if (box.clickedButton() == skipButton) {
+        runRevert(target, mainline, noCommit, message, false, false, true);
+    } else if (box.clickedButton() == abortButton) {
+        runRevert(target, mainline, noCommit, message, true, false, false);
+    }
+}
+
+void MainWindow::promptLogin()
+{
+    QString host;
+    const RepoInfo repo = repository_->activeRepo();
+    if (!repo.url.isEmpty()) {
+        host = QUrl(repo.url).host();
+    }
+    LoginDialog dialog(host, this);
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+    appendLog(tr("Logging in to %1…").arg(dialog.host()));
+    channel_->login(dialog.host(), dialog.username(), dialog.password());
 }
 
 void MainWindow::closeEvent(QCloseEvent *event)

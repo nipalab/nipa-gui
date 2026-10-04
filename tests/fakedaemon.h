@@ -304,6 +304,157 @@ public:
         });
     }
 
+    grpc::Status ProxyMergeRequestList(grpc::ServerContext *context,
+                                       const nipadaemon::ProxyMergeRequestListRequest *request,
+                                       nipadaemon::ProxyMergeRequestListResponse *response) override
+    {
+        if (auto status = checkAuth(context); !status.ok()) {
+            return status;
+        }
+        mrListRequests.push_back(*request);
+        const auto known = mergeRequestLists.find(request->root());
+        if (known != mergeRequestLists.end()) {
+            response->mutable_response()->CopyFrom(known->second);
+        }
+        return grpc::Status::OK;
+    }
+
+    grpc::Status ProxyMergeRequestCreate(grpc::ServerContext *context,
+                                         const nipadaemon::ProxyMergeRequestCreateRequest *request,
+                                         nipadaemon::ProxyMergeRequestCreateResponse *response) override
+    {
+        if (auto status = checkAuth(context); !status.ok()) {
+            return status;
+        }
+        mrCreateRequests.push_back(*request);
+        auto &list = mergeRequestLists[request->root()];
+        greet::MergeRequestDetail mergeRequest;
+        mergeRequest.set_id("mr-" + std::to_string(list.merge_requests_size() + 1));
+        mergeRequest.set_number(list.merge_requests_size() + 1);
+        mergeRequest.set_source_branch(request->request().source_branch());
+        mergeRequest.set_target_branch(request->request().target_branch());
+        mergeRequest.set_title(request->request().title());
+        mergeRequest.set_description(request->request().description());
+        mergeRequest.set_status("open");
+        mergeRequest.set_created_by("user-1");
+        list.add_merge_requests()->CopyFrom(mergeRequest);
+        response->mutable_response()->mutable_merge_request()->CopyFrom(mergeRequest);
+        return grpc::Status::OK;
+    }
+
+    grpc::Status ProxyMergeRequestMerge(grpc::ServerContext *context,
+                                        const nipadaemon::ProxyMergeRequestMergeRequest *request,
+                                        nipadaemon::ProxyMergeRequestMergeResponse *response) override
+    {
+        if (auto status = checkAuth(context); !status.ok()) {
+            return status;
+        }
+        mrMergeRequests.push_back(request->request().number());
+        auto *mergeRequest = findMergeRequest(request->root(), request->request().number());
+        if (mergeRequest != nullptr) {
+            mergeRequest->set_status("merged");
+            mergeRequest->set_merge_commit_id("merge0001");
+            response->mutable_response()->mutable_merge_request()->CopyFrom(*mergeRequest);
+        }
+        return grpc::Status::OK;
+    }
+
+    grpc::Status ProxyMergeRequestClose(grpc::ServerContext *context,
+                                        const nipadaemon::ProxyMergeRequestCloseRequest *request,
+                                        nipadaemon::ProxyMergeRequestCloseResponse *response) override
+    {
+        if (auto status = checkAuth(context); !status.ok()) {
+            return status;
+        }
+        mrCloseRequests.push_back(request->request().number());
+        auto *mergeRequest = findMergeRequest(request->root(), request->request().number());
+        if (mergeRequest != nullptr) {
+            mergeRequest->set_status("closed");
+            response->mutable_response()->mutable_merge_request()->CopyFrom(*mergeRequest);
+        }
+        return grpc::Status::OK;
+    }
+
+    grpc::Status ProxyMergeRequestReviews(grpc::ServerContext *context,
+                                          const nipadaemon::ProxyMergeRequestReviewsRequest *request,
+                                          nipadaemon::ProxyMergeRequestReviewsResponse *response) override
+    {
+        if (auto status = checkAuth(context); !status.ok()) {
+            return status;
+        }
+        mrReviewsRequests.push_back(request->request().number());
+        const auto known = mergeRequestReviews.find(request->request().number());
+        if (known != mergeRequestReviews.end()) {
+            response->mutable_response()->CopyFrom(known->second);
+        }
+        return grpc::Status::OK;
+    }
+
+    grpc::Status ProxyMergeRequestReviewState(
+        grpc::ServerContext *context,
+        const nipadaemon::ProxyMergeRequestReviewStateRequest *request,
+        nipadaemon::ProxyMergeRequestReviewStateResponse *response) override
+    {
+        if (auto status = checkAuth(context); !status.ok()) {
+            return status;
+        }
+        mrReviewStateRequests.push_back(request->request().number());
+        const auto known = mergeRequestReviewStates.find(request->request().number());
+        if (known != mergeRequestReviewStates.end()) {
+            response->mutable_response()->CopyFrom(known->second);
+        }
+        return grpc::Status::OK;
+    }
+
+    grpc::Status ProxyMergeRequestThreads(grpc::ServerContext *context,
+                                          const nipadaemon::ProxyMergeRequestThreadsRequest *request,
+                                          nipadaemon::ProxyMergeRequestThreadsResponse *response) override
+    {
+        if (auto status = checkAuth(context); !status.ok()) {
+            return status;
+        }
+        mrThreadsRequests.push_back(request->request().number());
+        const auto known = mergeRequestThreads.find(request->request().number());
+        if (known != mergeRequestThreads.end()) {
+            response->mutable_response()->CopyFrom(known->second);
+        }
+        return grpc::Status::OK;
+    }
+
+    grpc::Status Revert(grpc::ServerContext *context,
+                        const nipadaemon::RevertOpRequest *request,
+                        grpc::ServerWriter<nipadaemon::OpEvent> *writer) override
+    {
+        if (auto status = checkAuth(context); !status.ok()) {
+            return status;
+        }
+        revertRequests.push_back(*request);
+        return streamOperation(revertScript, writer, [this, request](nipadaemon::OpEvent *event) {
+            auto *result = event->mutable_result()->mutable_revert();
+            result->set_aborted(request->abort());
+            result->set_skipped(request->skip());
+            result->set_committed(revertCommitted);
+            result->set_no_change(revertNoChange);
+            for (const std::string &conflict : revertConflicts) {
+                result->add_conflicts(conflict);
+            }
+        });
+    }
+
+    grpc::Status Login(grpc::ServerContext *context,
+                       const nipadaemon::LoginRequest *request,
+                       nipadaemon::LoginResponse *) override
+    {
+        if (auto status = checkAuth(context); !status.ok()) {
+            return status;
+        }
+        loginRequests.push_back(*request);
+        if (loginShouldFail) {
+            return grpc::Status(grpc::StatusCode::UNAUTHENTICATED, "invalid credentials");
+        }
+        return grpc::Status::OK;
+    }
+
     grpc::Status Diff(grpc::ServerContext *context,
                       const nipadaemon::DiffRequest *request,
                       grpc::ServerWriter<nipadaemon::DiffEvent> *writer) override
@@ -444,6 +595,19 @@ public:
     std::vector<nipadaemon::ProxyCommitWalkRequest> commitWalkRequests;
     std::vector<nipadaemon::SwitchRequest> switchRequests;
     std::vector<nipadaemon::MergeOpRequest> mergeRequests;
+    std::map<std::string, greet::ListMergeRequestsResponse> mergeRequestLists;
+    std::vector<nipadaemon::ProxyMergeRequestListRequest> mrListRequests;
+    std::vector<nipadaemon::ProxyMergeRequestCreateRequest> mrCreateRequests;
+    std::vector<qint64> mrMergeRequests;
+    std::vector<qint64> mrCloseRequests;
+    std::vector<qint64> mrReviewsRequests;
+    std::vector<qint64> mrReviewStateRequests;
+    std::vector<qint64> mrThreadsRequests;
+    std::map<qint64, greet::ListMergeRequestReviewsResponse> mergeRequestReviews;
+    std::map<qint64, greet::GetMergeRequestReviewStateResponse> mergeRequestReviewStates;
+    std::map<qint64, greet::ListMergeRequestThreadsResponse> mergeRequestThreads;
+    std::vector<nipadaemon::RevertOpRequest> revertRequests;
+    std::vector<nipadaemon::LoginRequest> loginRequests;
     int listReposCalls = 0;
     int treeRequests = 0;
     int listLocksRequests = 0;
@@ -467,8 +631,28 @@ public:
     bool mergeFastForwarded = false;
     bool mergeCommitted = false;
     std::vector<std::string> mergeConflicts;
+    FakeStreamScript revertScript{.phase = "revert"};
+    bool revertCommitted = false;
+    bool revertNoChange = false;
+    std::vector<std::string> revertConflicts;
+    bool loginShouldFail = false;
 
 private:
+    greet::MergeRequestDetail *findMergeRequest(const std::string &root, qint64 number)
+    {
+        const auto known = mergeRequestLists.find(root);
+        if (known == mergeRequestLists.end()) {
+            return nullptr;
+        }
+        for (greet::MergeRequestDetail &mergeRequest :
+             *known->second.mutable_merge_requests()) {
+            if (mergeRequest.number() == number) {
+                return &mergeRequest;
+            }
+        }
+        return nullptr;
+    }
+
     template <typename ResultBuilder>
     grpc::Status streamOperation(const FakeStreamScript &script,
                                  grpc::ServerWriter<nipadaemon::OpEvent> *writer,

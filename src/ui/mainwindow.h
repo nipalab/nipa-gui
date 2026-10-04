@@ -29,6 +29,8 @@ class GraphService;
 class HistoryService;
 class LockService;
 class LocksModel;
+class MergeRequestModel;
+class MergeRequestService;
 class RepositoryService;
 class RepositoryTreeModel;
 class RevisionGraphModel;
@@ -86,6 +88,15 @@ private slots:
     void switchSelectedBranch();
     void deleteSelectedBranch();
     void promptMerge();
+    void promptCreateMergeRequest();
+    void mergeSelectedMergeRequest();
+    void closeSelectedMergeRequest();
+    void onMergeRequestsChanged(const QList<MergeRequestInfo> &mergeRequests);
+    void onMergeRequestSelectionChanged(const MergeRequestInfo &mergeRequest);
+    void onMergeRequestReviewsChanged(const QList<ReviewInfo> &reviews, const ReviewStateInfo &state);
+    void onMergeRequestThreadsChanged(const QList<ReviewThreadInfo> &threads);
+    void promptRevert();
+    void promptLogin();
     void diffSelectedPending();
     void diffCommit();
     void refreshDiff();
@@ -100,6 +111,7 @@ private:
     QWidget *buildHistoryPage();
     QWidget *buildBranchesPage();
     QWidget *buildGraphPage();
+    QWidget *buildMergeRequestPage();
     QWidget *buildDiffPage();
     QWidget *buildLocksPage();
     void appendLog(const QString &message);
@@ -111,6 +123,13 @@ private:
                       OperationResult *result = nullptr);
     void refreshWorkspace();
     void handleMergeConflicts(const QString &sourceBranch, const QStringList &conflicts);
+    void runRevert(const QString &target,
+                   int mainline,
+                   bool noCommit,
+                   const QString &message,
+                   bool abort,
+                   bool continueOp,
+                   bool skip);
     BranchInfo selectedBranch() const;
     QStringList selectedStatusPaths() const;
     bool selectedStatusStaged() const;
@@ -125,6 +144,7 @@ private:
     LockService *locks_ = nullptr;
     BranchService *branches_ = nullptr;
     GraphService *graph_ = nullptr;
+    MergeRequestService *mergeRequests_ = nullptr;
 
     StatusModel *statusModel_ = nullptr;
     RepositoryTreeModel *treeModel_ = nullptr;
@@ -133,11 +153,13 @@ private:
     LocksModel *locksModel_ = nullptr;
     BranchModel *branchModel_ = nullptr;
     RevisionGraphModel *graphModel_ = nullptr;
+    MergeRequestModel *mergeRequestModel_ = nullptr;
 
     QTabWidget *centralTabs_ = nullptr;
     QWidget *historyPage_ = nullptr;
     QWidget *branchesPage_ = nullptr;
     QWidget *graphPage_ = nullptr;
+    QWidget *mergeRequestPage_ = nullptr;
     QWidget *diffPage_ = nullptr;
     QWidget *locksPage_ = nullptr;
 
@@ -179,6 +201,16 @@ private:
     QTableView *graphTable_ = nullptr;
     QPushButton *refreshGraphButton_ = nullptr;
 
+    QTableView *mergeRequestTable_ = nullptr;
+    QComboBox *mergeRequestFilterCombo_ = nullptr;
+    QPushButton *refreshMergeRequestsButton_ = nullptr;
+    QPushButton *newMergeRequestButton_ = nullptr;
+    QPushButton *mergeMergeRequestButton_ = nullptr;
+    QPushButton *closeMergeRequestButton_ = nullptr;
+    QLabel *mergeRequestDetailLabel_ = nullptr;
+    QPlainTextEdit *mergeRequestReviewsEdit_ = nullptr;
+    QPlainTextEdit *mergeRequestThreadsEdit_ = nullptr;
+
     QAction *openRepositoryAction_ = nullptr;
     QAction *closeRepositoryAction_ = nullptr;
     QAction *refreshAction_ = nullptr;
@@ -191,6 +223,8 @@ private:
     QAction *updateAction_ = nullptr;
     QAction *diffAction_ = nullptr;
     QAction *mergeAction_ = nullptr;
+    QAction *revertAction_ = nullptr;
+    QAction *loginAction_ = nullptr;
 
     DaemonDiff *currentDiff_ = nullptr;
     DiffRequestData lastDiffRequest_;

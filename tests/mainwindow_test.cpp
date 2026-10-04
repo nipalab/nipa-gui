@@ -25,6 +25,7 @@ private slots:
     void showsHistoryAndLocks();
     void diffsSelectedPendingFile();
     void showsBranchesAndGraph();
+    void showsMergeRequests();
 };
 
 void MainWindowTest::showsDisconnectedStatus()
@@ -398,6 +399,99 @@ void MainWindowTest::showsBranchesAndGraph()
     auto *mergeAction = window.findChild<QAction *>(QStringLiteral("mergeAction"));
     QVERIFY(mergeAction != nullptr);
     QTRY_VERIFY(mergeAction->isEnabled());
+}
+
+void MainWindowTest::showsMergeRequests()
+{
+    FakeDaemon daemon;
+    nipadaemon::RepoInfo repo;
+    repo.set_root("/work/assets");
+    repo.set_branch("main");
+    daemon.service().repos.push_back(repo);
+    daemon.service().watchedRepos["/work/assets"] = repo;
+
+    nipadaemon::StatusResponse status;
+    status.set_branch("main");
+    daemon.service().statuses["/work/assets"] = status;
+
+    greet::GetListBranchResponse branches;
+    auto *mainBranch = branches.add_branches();
+    mainBranch->set_name("main");
+    mainBranch->set_commit_id("c1");
+    mainBranch->set_is_default(true);
+    auto *feature = branches.add_branches();
+    feature->set_name("feature");
+    feature->set_commit_id("c2");
+    daemon.service().branchLists["/work/assets"] = branches;
+
+    greet::ListMergeRequestsResponse list;
+    auto *mergeRequest = list.add_merge_requests();
+    mergeRequest->set_id("mr-1");
+    mergeRequest->set_number(1);
+    mergeRequest->set_source_branch("feature");
+    mergeRequest->set_target_branch("main");
+    mergeRequest->set_title("Add feature");
+    mergeRequest->set_description("Adds the thing");
+    mergeRequest->set_status("open");
+    mergeRequest->set_created_by("u1");
+    mergeRequest->mutable_updated_at()->set_seconds(1700000000);
+    daemon.service().mergeRequestLists["/work/assets"] = list;
+
+    greet::ListMergeRequestReviewsResponse reviews;
+    auto *review = reviews.add_reviews();
+    review->set_id("r1");
+    review->set_state("approved");
+    review->mutable_reviewer()->set_name("Maya");
+    daemon.service().mergeRequestReviews[1] = reviews;
+
+    greet::GetMergeRequestReviewStateResponse state;
+    state.mutable_state()->set_approvals(1);
+    daemon.service().mergeRequestReviewStates[1] = state;
+
+    greet::ListMergeRequestThreadsResponse threads;
+    auto *thread = threads.add_threads();
+    thread->set_id("t1");
+    thread->set_file_path("assets/logo.png");
+    thread->set_new_line(3);
+    thread->mutable_created_by()->set_name("Ada");
+    auto *comment = thread->add_comments();
+    comment->set_id("c1");
+    comment->mutable_user()->set_name("Ada");
+    comment->set_body("why this asset?");
+    daemon.service().mergeRequestThreads[1] = threads;
+
+    QTemporaryDir tmp;
+    QVERIFY(tmp.isValid());
+    const QString configPath = tmp.path() + QStringLiteral("/nipa/daemon.json");
+    QVERIFY(!writeDaemonFile(configPath, daemon.port(), QStringLiteral("token")).isEmpty());
+
+    MainWindow window(nullptr, configPath, false);
+    auto *connection = window.findChild<QLabel *>(QStringLiteral("connectionLabel"));
+    QTRY_VERIFY_WITH_TIMEOUT(connection->text().contains(QStringLiteral("9.9.9")), 10000);
+    window.openRepository(QStringLiteral("/work/assets"));
+
+    auto *table = window.findChild<QTableView *>(QStringLiteral("mergeRequestTable"));
+    QVERIFY(table != nullptr);
+    QTRY_COMPARE(table->model()->rowCount(), 1);
+    table->selectRow(0);
+
+    auto *detail = window.findChild<QLabel *>(QStringLiteral("mergeRequestDetailLabel"));
+    QVERIFY(detail != nullptr);
+    QTRY_VERIFY(detail->text().contains(QStringLiteral("Add feature")));
+
+    auto *reviewsEdit = window.findChild<QPlainTextEdit *>(QStringLiteral("mergeRequestReviewsEdit"));
+    QVERIFY(reviewsEdit != nullptr);
+    QTRY_VERIFY(reviewsEdit->toPlainText().contains(QStringLiteral("Maya")));
+    QVERIFY(reviewsEdit->toPlainText().contains(QStringLiteral("Approvals: 1")));
+
+    auto *threadsEdit = window.findChild<QPlainTextEdit *>(QStringLiteral("mergeRequestThreadsEdit"));
+    QVERIFY(threadsEdit != nullptr);
+    QTRY_VERIFY(threadsEdit->toPlainText().contains(QStringLiteral("why this asset?")));
+    QVERIFY(threadsEdit->toPlainText().contains(QStringLiteral("assets/logo.png:3")));
+
+    auto *mergeButton = window.findChild<QPushButton *>(QStringLiteral("mergeMergeRequestButton"));
+    QVERIFY(mergeButton != nullptr);
+    QTRY_VERIFY(mergeButton->isEnabled());
 }
 
 QTEST_MAIN(MainWindowTest)

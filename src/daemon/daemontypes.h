@@ -173,3 +173,76 @@ struct BranchInfo {
 };
 
 Q_DECLARE_METATYPE(BranchInfo)
+
+/// A merge request (`ProxyMergeRequestList` and friends).
+struct MergeRequestInfo {
+    QString id;
+    qint64 number = 0;
+    QString sourceBranch;
+    QString targetBranch;
+    QString title;
+    QString description;
+    QString status; // open, merged, closed
+    QString mergeCommitId;
+    QString createdBy;
+    QDateTime createdAt;
+    QDateTime updatedAt;
+};
+
+struct ReviewActorInfo {
+    QString userId;
+    QString name;
+    QString photoUrl;
+};
+
+/// One submitted review decision.
+struct ReviewInfo {
+    QString id;
+    ReviewActorInfo reviewer;
+    QString state; // approved, changes_requested, commented
+    QString body;
+    QString headCommitId;
+    bool stale = false;
+    QDateTime createdAt;
+};
+
+/// Aggregated review state of a merge request.
+struct ReviewStateInfo {
+    int approvals = 0;
+    int changesRequested = 0;
+    int dismissedApprovals = 0;
+    QStringList outstandingReviewers;
+    QString headCommitId;
+};
+
+struct ReviewCommentInfo {
+    QString id;
+    QString threadId;
+    ReviewActorInfo user;
+    QString body;
+    bool system = false;
+    bool edited = false;
+    QDateTime createdAt;
+};
+
+/// An inline review thread (read-only in this client: the daemon exposes no
+/// write proxies for comments yet).
+struct ReviewThreadInfo {
+    QString id;
+    QString filePath; // empty for top-level conversations
+    QString side;     // left, right, or empty
+    bool hasOldLine = false;
+    bool hasNewLine = false;
+    qint64 oldLine = 0;
+    qint64 newLine = 0;
+    bool outdated = false;
+    bool resolved = false;
+    ReviewActorInfo createdBy;
+    QDateTime createdAt;
+    QList<ReviewCommentInfo> comments;
+};
+
+Q_DECLARE_METATYPE(MergeRequestInfo)
+Q_DECLARE_METATYPE(ReviewInfo)
+Q_DECLARE_METATYPE(ReviewStateInfo)
+Q_DECLARE_METATYPE(ReviewThreadInfo)

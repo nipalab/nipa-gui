@@ -50,6 +50,8 @@ add_library(nipa-gui-core STATIC
     src/models/commitlogmodel.h
     src/models/locksmodel.cpp
     src/models/locksmodel.h
+    src/models/mergerequestmodel.cpp
+    src/models/mergerequestmodel.h
     src/models/repositorytreemodel.cpp
     src/models/repositorytreemodel.h
     src/models/revisiongraphmodel.cpp
@@ -64,6 +66,8 @@ add_library(nipa-gui-core STATIC
     src/services/historyservice.h
     src/services/lockservice.cpp
     src/services/lockservice.h
+    src/services/mergerequestservice.cpp
+    src/services/mergerequestservice.h
     src/services/repositoryservice.cpp
     src/services/repositoryservice.h
     src/services/statusservice.cpp
@@ -72,8 +76,12 @@ add_library(nipa-gui-core STATIC
     src/ui/diffview.h
     src/ui/branchdialogs.cpp
     src/ui/branchdialogs.h
+    src/ui/logindialog.cpp
+    src/ui/logindialog.h
     src/ui/mainwindow.cpp
     src/ui/mainwindow.h
+    src/ui/mrdialogs.cpp
+    src/ui/mrdialogs.h
     src/ui/operationprogressdialog.cpp
     src/ui/operationprogressdialog.h
     src/ui/submitdialog.cpp

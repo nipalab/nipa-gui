@@ -32,6 +32,10 @@ add_executable(revisiongraphmodel_test revisiongraphmodel_test.cpp)
 target_link_libraries(revisiongraphmodel_test PRIVATE nipa-gui-core Qt6::Test)
 add_test(NAME revisiongraphmodel_test COMMAND revisiongraphmodel_test)
 
+add_executable(mergerequestmodel_test mergerequestmodel_test.cpp)
+target_link_libraries(mergerequestmodel_test PRIVATE nipa-gui-core Qt6::Test)
+add_test(NAME mergerequestmodel_test COMMAND mergerequestmodel_test)
+
 add_executable(mainwindow_test mainwindow_test.cpp)
 target_link_libraries(mainwindow_test PRIVATE nipa-gui-core Qt6::Test)
 add_test(NAME mainwindow_test COMMAND mainwindow_test)

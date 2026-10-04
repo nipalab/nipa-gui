@@ -183,6 +183,92 @@ CommitInfo commitWalkFromProto(const greet::CommitWalkEntry &entry)
     return commit;
 }
 
+ReviewActorInfo actorFromProto(const greet::ReviewActor &actor)
+{
+    ReviewActorInfo info;
+    info.userId = QString::fromStdString(actor.user_id());
+    info.name = QString::fromStdString(actor.name());
+    info.photoUrl = QString::fromStdString(actor.photo_url());
+    return info;
+}
+
+MergeRequestInfo mergeRequestFromProto(const greet::MergeRequestDetail &mergeRequest)
+{
+    MergeRequestInfo info;
+    info.id = QString::fromStdString(mergeRequest.id());
+    info.number = mergeRequest.number();
+    info.sourceBranch = QString::fromStdString(mergeRequest.source_branch());
+    info.targetBranch = QString::fromStdString(mergeRequest.target_branch());
+    info.title = QString::fromStdString(mergeRequest.title());
+    info.description = QString::fromStdString(mergeRequest.description());
+    info.status = QString::fromStdString(mergeRequest.status());
+    if (mergeRequest.has_merge_commit_id()) {
+        info.mergeCommitId = QString::fromStdString(mergeRequest.merge_commit_id());
+    }
+    info.createdBy = QString::fromStdString(mergeRequest.created_by());
+    info.createdAt = timestampFromProto(mergeRequest.created_at());
+    info.updatedAt = timestampFromProto(mergeRequest.updated_at());
+    return info;
+}
+
+ReviewInfo reviewFromProto(const greet::MergeRequestReviewDetail &review)
+{
+    ReviewInfo info;
+    info.id = QString::fromStdString(review.id());
+    info.reviewer = actorFromProto(review.reviewer());
+    info.state = QString::fromStdString(review.state());
+    info.body = QString::fromStdString(review.body());
+    info.headCommitId = QString::fromStdString(review.head_commit_id());
+    info.stale = review.stale();
+    info.createdAt = timestampFromProto(review.created_at());
+    return info;
+}
+
+ReviewStateInfo reviewStateFromProto(const greet::MergeRequestReviewState &state)
+{
+    ReviewStateInfo info;
+    info.approvals = state.approvals();
+    info.changesRequested = state.changes_requested();
+    info.dismissedApprovals = state.dismissed_approvals();
+    for (const auto &reviewer : state.outstanding_reviewers()) {
+        info.outstandingReviewers.append(QString::fromStdString(reviewer));
+    }
+    info.headCommitId = QString::fromStdString(state.head_commit_id());
+    return info;
+}
+
+ReviewThreadInfo threadFromProto(const greet::MergeRequestThreadDetail &thread)
+{
+    ReviewThreadInfo info;
+    info.id = QString::fromStdString(thread.id());
+    info.filePath = QString::fromStdString(thread.file_path());
+    info.side = QString::fromStdString(thread.side());
+    if (thread.has_old_line()) {
+        info.hasOldLine = true;
+        info.oldLine = thread.old_line();
+    }
+    if (thread.has_new_line()) {
+        info.hasNewLine = true;
+        info.newLine = thread.new_line();
+    }
+    info.outdated = thread.outdated();
+    info.resolved = thread.resolved();
+    info.createdBy = actorFromProto(thread.created_by());
+    info.createdAt = timestampFromProto(thread.created_at());
+    for (const auto &comment : thread.comments()) {
+        ReviewCommentInfo entry;
+        entry.id = QString::fromStdString(comment.id());
+        entry.threadId = QString::fromStdString(comment.thread_id());
+        entry.user = actorFromProto(comment.user());
+        entry.body = QString::fromStdString(comment.body());
+        entry.system = comment.system();
+        entry.edited = comment.edited();
+        entry.createdAt = timestampFromProto(comment.created_at());
+        info.comments.append(entry);
+    }
+    return info;
+}
+
 QList<int> versionSegments(const QString &version)
 {
     QString cleaned = version.trimmed();
@@ -229,6 +315,13 @@ DaemonChannel::DaemonChannel(QString configPath, QObject *parent)
     qRegisterMetaType<DiffRequestData>();
     qRegisterMetaType<BranchInfo>();
     qRegisterMetaType<QList<BranchInfo>>();
+    qRegisterMetaType<MergeRequestInfo>();
+    qRegisterMetaType<QList<MergeRequestInfo>>();
+    qRegisterMetaType<ReviewInfo>();
+    qRegisterMetaType<QList<ReviewInfo>>();
+    qRegisterMetaType<ReviewStateInfo>();
+    qRegisterMetaType<ReviewThreadInfo>();
+    qRegisterMetaType<QList<ReviewThreadInfo>>();
 
     spawnPollTimer_.setSingleShot(false);
     spawnPollTimer_.setInterval(kSpawnPollIntervalMs);
@@ -1398,6 +1491,400 @@ DaemonOperation *DaemonChannel::merge(const QString &root,
                           [stub, request](grpc::ClientContext *context) -> std::unique_ptr<OpReader> {
                               return std::unique_ptr<OpReader>(stub->Merge(context, request));
                           });
+}
+
+DaemonOperation *DaemonChannel::revert(const QString &root,
+                                       const QString &target,
+                                       bool abort,
+                                       bool continueOp,
+                                       bool skip,
+                                       bool noCommit,
+                                       int mainline,
+                                       const QString &message)
+{
+    auto stub = stub_;
+    nipadaemon::RevertOpRequest request;
+    request.set_root(root.toStdString());
+    request.set_target(target.toStdString());
+    request.set_abort(abort);
+    request.set_continue_(continueOp);
+    request.set_skip(skip);
+    request.set_no_commit(noCommit);
+    request.set_mainline(mainline);
+    request.set_message(message.toStdString());
+    return startOperation(DaemonOperation::Kind::Revert,
+                          [stub, request](grpc::ClientContext *context) -> std::unique_ptr<OpReader> {
+                              return std::unique_ptr<OpReader>(stub->Revert(context, request));
+                          });
+}
+
+void DaemonChannel::fetchMergeRequests(const QString &root, const QString &status, int limit)
+{
+    if (!stub_) {
+        emit mergeRequestsFetched(false, root, {}, tr("the daemon endpoint is not available"));
+        return;
+    }
+
+    struct Outcome {
+        bool ok = false;
+        QList<MergeRequestInfo> mergeRequests;
+        QString error;
+        grpc::StatusCode code = grpc::StatusCode::OK;
+    };
+    auto outcome = std::make_shared<Outcome>();
+    auto stub = stub_;
+    auto endpoint = endpoint_;
+
+    runAsync(
+        [stub, endpoint, outcome, root, status, limit] {
+            grpc::ClientContext context;
+            addAuthMetadata(&context, endpoint);
+            setDeadline(&context, kQuickRpcTimeoutMs);
+
+            nipadaemon::ProxyMergeRequestListRequest request;
+            request.set_root(root.toStdString());
+            auto *inner = request.mutable_request();
+            inner->set_status(status.toStdString());
+            inner->set_limit(limit);
+
+            nipadaemon::ProxyMergeRequestListResponse response;
+            const grpc::Status result = stub->ProxyMergeRequestList(&context, request, &response);
+            outcome->ok = result.ok();
+            outcome->code = result.error_code();
+            if (result.ok()) {
+                for (const auto &entry : response.response().merge_requests()) {
+                    outcome->mergeRequests.append(mergeRequestFromProto(entry));
+                }
+            } else {
+                outcome->error = rpcErrorText(result);
+            }
+        },
+        [this, outcome, root] {
+            if (!outcome->ok) {
+                reportRpcFailure(outcome->code, outcome->error);
+            }
+            emit mergeRequestsFetched(outcome->ok, root, outcome->mergeRequests, outcome->error);
+        });
+}
+
+void DaemonChannel::createMergeRequest(const QString &root,
+                                       const QString &title,
+                                       const QString &description,
+                                       const QString &sourceBranch,
+                                       const QString &targetBranch)
+{
+    if (!stub_) {
+        emit mergeRequestCreated(false, root, {}, tr("the daemon endpoint is not available"));
+        return;
+    }
+
+    struct Outcome {
+        bool ok = false;
+        MergeRequestInfo mergeRequest;
+        QString error;
+        grpc::StatusCode code = grpc::StatusCode::OK;
+    };
+    auto outcome = std::make_shared<Outcome>();
+    auto stub = stub_;
+    auto endpoint = endpoint_;
+
+    runAsync(
+        [stub, endpoint, outcome, root, title, description, sourceBranch, targetBranch] {
+            grpc::ClientContext context;
+            addAuthMetadata(&context, endpoint);
+            setDeadline(&context, kQuickRpcTimeoutMs);
+
+            nipadaemon::ProxyMergeRequestCreateRequest request;
+            request.set_root(root.toStdString());
+            auto *inner = request.mutable_request();
+            inner->set_title(title.toStdString());
+            inner->set_description(description.toStdString());
+            inner->set_source_branch(sourceBranch.toStdString());
+            inner->set_target_branch(targetBranch.toStdString());
+
+            nipadaemon::ProxyMergeRequestCreateResponse response;
+            const grpc::Status result = stub->ProxyMergeRequestCreate(&context, request, &response);
+            outcome->ok = result.ok();
+            outcome->code = result.error_code();
+            if (result.ok()) {
+                outcome->mergeRequest = mergeRequestFromProto(response.response().merge_request());
+            } else {
+                outcome->error = rpcErrorText(result);
+            }
+        },
+        [this, outcome, root] {
+            if (!outcome->ok) {
+                reportRpcFailure(outcome->code, outcome->error);
+            }
+            emit mergeRequestCreated(outcome->ok, root, outcome->mergeRequest, outcome->error);
+        });
+}
+
+void DaemonChannel::mergeMergeRequest(const QString &root, qint64 number)
+{
+    if (!stub_) {
+        emit mergeRequestMerged(false, root, {}, tr("the daemon endpoint is not available"));
+        return;
+    }
+
+    struct Outcome {
+        bool ok = false;
+        MergeRequestInfo mergeRequest;
+        QString error;
+        grpc::StatusCode code = grpc::StatusCode::OK;
+    };
+    auto outcome = std::make_shared<Outcome>();
+    auto stub = stub_;
+    auto endpoint = endpoint_;
+
+    runAsync(
+        [stub, endpoint, outcome, root, number] {
+            grpc::ClientContext context;
+            addAuthMetadata(&context, endpoint);
+            setDeadline(&context, kQuickRpcTimeoutMs);
+
+            nipadaemon::ProxyMergeRequestMergeRequest request;
+            request.set_root(root.toStdString());
+            request.mutable_request()->set_number(number);
+
+            nipadaemon::ProxyMergeRequestMergeResponse response;
+            const grpc::Status result = stub->ProxyMergeRequestMerge(&context, request, &response);
+            outcome->ok = result.ok();
+            outcome->code = result.error_code();
+            if (result.ok()) {
+                outcome->mergeRequest = mergeRequestFromProto(response.response().merge_request());
+            } else {
+                outcome->error = rpcErrorText(result);
+            }
+        },
+        [this, outcome, root] {
+            if (!outcome->ok) {
+                reportRpcFailure(outcome->code, outcome->error);
+            }
+            emit mergeRequestMerged(outcome->ok, root, outcome->mergeRequest, outcome->error);
+        });
+}
+
+void DaemonChannel::closeMergeRequest(const QString &root, qint64 number)
+{
+    if (!stub_) {
+        emit mergeRequestClosed(false, root, {}, tr("the daemon endpoint is not available"));
+        return;
+    }
+
+    struct Outcome {
+        bool ok = false;
+        MergeRequestInfo mergeRequest;
+        QString error;
+        grpc::StatusCode code = grpc::StatusCode::OK;
+    };
+    auto outcome = std::make_shared<Outcome>();
+    auto stub = stub_;
+    auto endpoint = endpoint_;
+
+    runAsync(
+        [stub, endpoint, outcome, root, number] {
+            grpc::ClientContext context;
+            addAuthMetadata(&context, endpoint);
+            setDeadline(&context, kQuickRpcTimeoutMs);
+
+            nipadaemon::ProxyMergeRequestCloseRequest request;
+            request.set_root(root.toStdString());
+            request.mutable_request()->set_number(number);
+
+            nipadaemon::ProxyMergeRequestCloseResponse response;
+            const grpc::Status result = stub->ProxyMergeRequestClose(&context, request, &response);
+            outcome->ok = result.ok();
+            outcome->code = result.error_code();
+            if (result.ok()) {
+                outcome->mergeRequest = mergeRequestFromProto(response.response().merge_request());
+            } else {
+                outcome->error = rpcErrorText(result);
+            }
+        },
+        [this, outcome, root] {
+            if (!outcome->ok) {
+                reportRpcFailure(outcome->code, outcome->error);
+            }
+            emit mergeRequestClosed(outcome->ok, root, outcome->mergeRequest, outcome->error);
+        });
+}
+
+void DaemonChannel::fetchMergeRequestReviews(const QString &root, qint64 number)
+{
+    if (!stub_) {
+        emit mergeRequestReviewsFetched(false, root, number, {}, tr("the daemon endpoint is not available"));
+        return;
+    }
+
+    struct Outcome {
+        bool ok = false;
+        QList<ReviewInfo> reviews;
+        QString error;
+        grpc::StatusCode code = grpc::StatusCode::OK;
+    };
+    auto outcome = std::make_shared<Outcome>();
+    auto stub = stub_;
+    auto endpoint = endpoint_;
+
+    runAsync(
+        [stub, endpoint, outcome, root, number] {
+            grpc::ClientContext context;
+            addAuthMetadata(&context, endpoint);
+            setDeadline(&context, kQuickRpcTimeoutMs);
+
+            nipadaemon::ProxyMergeRequestReviewsRequest request;
+            request.set_root(root.toStdString());
+            request.mutable_request()->set_number(number);
+
+            nipadaemon::ProxyMergeRequestReviewsResponse response;
+            const grpc::Status result = stub->ProxyMergeRequestReviews(&context, request, &response);
+            outcome->ok = result.ok();
+            outcome->code = result.error_code();
+            if (result.ok()) {
+                for (const auto &entry : response.response().reviews()) {
+                    outcome->reviews.append(reviewFromProto(entry));
+                }
+            } else {
+                outcome->error = rpcErrorText(result);
+            }
+        },
+        [this, outcome, root, number] {
+            if (!outcome->ok) {
+                reportRpcFailure(outcome->code, outcome->error);
+            }
+            emit mergeRequestReviewsFetched(outcome->ok, root, number, outcome->reviews, outcome->error);
+        });
+}
+
+void DaemonChannel::fetchMergeRequestReviewState(const QString &root, qint64 number)
+{
+    if (!stub_) {
+        emit mergeRequestReviewStateFetched(false, root, number, {}, tr("the daemon endpoint is not available"));
+        return;
+    }
+
+    struct Outcome {
+        bool ok = false;
+        ReviewStateInfo state;
+        QString error;
+        grpc::StatusCode code = grpc::StatusCode::OK;
+    };
+    auto outcome = std::make_shared<Outcome>();
+    auto stub = stub_;
+    auto endpoint = endpoint_;
+
+    runAsync(
+        [stub, endpoint, outcome, root, number] {
+            grpc::ClientContext context;
+            addAuthMetadata(&context, endpoint);
+            setDeadline(&context, kQuickRpcTimeoutMs);
+
+            nipadaemon::ProxyMergeRequestReviewStateRequest request;
+            request.set_root(root.toStdString());
+            request.mutable_request()->set_number(number);
+
+            nipadaemon::ProxyMergeRequestReviewStateResponse response;
+            const grpc::Status result =
+                stub->ProxyMergeRequestReviewState(&context, request, &response);
+            outcome->ok = result.ok();
+            outcome->code = result.error_code();
+            if (result.ok()) {
+                outcome->state = reviewStateFromProto(response.response().state());
+            } else {
+                outcome->error = rpcErrorText(result);
+            }
+        },
+        [this, outcome, root, number] {
+            if (!outcome->ok) {
+                reportRpcFailure(outcome->code, outcome->error);
+            }
+            emit mergeRequestReviewStateFetched(outcome->ok, root, number, outcome->state, outcome->error);
+        });
+}
+
+void DaemonChannel::fetchMergeRequestThreads(const QString &root, qint64 number)
+{
+    if (!stub_) {
+        emit mergeRequestThreadsFetched(false, root, number, {}, tr("the daemon endpoint is not available"));
+        return;
+    }
+
+    struct Outcome {
+        bool ok = false;
+        QList<ReviewThreadInfo> threads;
+        QString error;
+        grpc::StatusCode code = grpc::StatusCode::OK;
+    };
+    auto outcome = std::make_shared<Outcome>();
+    auto stub = stub_;
+    auto endpoint = endpoint_;
+
+    runAsync(
+        [stub, endpoint, outcome, root, number] {
+            grpc::ClientContext context;
+            addAuthMetadata(&context, endpoint);
+            setDeadline(&context, kQuickRpcTimeoutMs);
+
+            nipadaemon::ProxyMergeRequestThreadsRequest request;
+            request.set_root(root.toStdString());
+            request.mutable_request()->set_number(number);
+
+            nipadaemon::ProxyMergeRequestThreadsResponse response;
+            const grpc::Status result = stub->ProxyMergeRequestThreads(&context, request, &response);
+            outcome->ok = result.ok();
+            outcome->code = result.error_code();
+            if (result.ok()) {
+                for (const auto &entry : response.response().threads()) {
+                    outcome->threads.append(threadFromProto(entry));
+                }
+            } else {
+                outcome->error = rpcErrorText(result);
+            }
+        },
+        [this, outcome, root, number] {
+            if (!outcome->ok) {
+                reportRpcFailure(outcome->code, outcome->error);
+            }
+            emit mergeRequestThreadsFetched(outcome->ok, root, number, outcome->threads, outcome->error);
+        });
+}
+
+void DaemonChannel::login(const QString &host, const QString &username, const QString &password)
+{
+    if (!stub_) {
+        emit loginFinished(false, tr("the daemon endpoint is not available"));
+        return;
+    }
+
+    struct Outcome {
+        bool ok = false;
+        QString error;
+    };
+    auto outcome = std::make_shared<Outcome>();
+    auto stub = stub_;
+    auto endpoint = endpoint_;
+
+    runAsync(
+        [stub, endpoint, outcome, host, username, password] {
+            grpc::ClientContext context;
+            addAuthMetadata(&context, endpoint);
+            setDeadline(&context, kQuickRpcTimeoutMs);
+
+            nipadaemon::LoginRequest request;
+            request.set_host(host.toStdString());
+            request.set_username(username.toStdString());
+            request.set_password(password.toStdString());
+            nipadaemon::LoginResponse response;
+            const grpc::Status result = stub->Login(&context, request, &response);
+            outcome->ok = result.ok();
+            if (!result.ok()) {
+                outcome->error = rpcErrorText(result);
+            }
+        },
+        [this, outcome] {
+            emit loginFinished(outcome->ok, outcome->error);
+        });
 }
 
 DaemonDiff *DaemonChannel::diff(const QString &root, const DiffRequestData &requestData)

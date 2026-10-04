@@ -38,7 +38,7 @@ cmake --build build
 
 ## Status
 
-Milestones 0–3 are implemented:
+Milestones 0–4 are implemented:
 
 - **Daemon lifecycle** — auto-spawns `nipa serve` when no discovery file
   exists, waits for readiness, reconnects when the daemon disappears, and
@@ -70,9 +70,17 @@ Milestones 0–3 are implemented:
 - **Revision graph** — newest-first, both-parents walk (`ProxyCommitWalk`) from
   the branch head rendered as a lane graph (`●│`) with commit, message and
   date; double-click opens the commit in History.
+- **Merge requests** — list with status filter, create (title/description/
+  source→target), merge and close, plus read-only review state, decisions and
+  inline discussion threads. Comment/review writes await daemon proxies.
+- **Revert** — commit/range revert with mainline and no-commit controls, and a
+  conflict flow offering continue/skip/abort resumption.
+- **Login** — server login through the daemon's warm transport (host, user,
+  password); the client never persists the password.
+- **Sparse checkouts** — the clone's sparse prefixes are shown in the
+  repository tooltip and log (the daemon exposes no sparse mutation yet).
 
-Next: merge requests, revert, sparse-checkout editor and login (M4). The full
-roadmap (ACLs, P4V parity) is tracked in
+Next: ACL/admin panels and remaining P4V parity. The full roadmap is tracked in
 [INTEGRATIONS.md](https://github.com/nipalab/nipa/blob/main/docs/INTEGRATIONS.md).
 
 ## License
