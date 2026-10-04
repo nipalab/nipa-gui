@@ -72,6 +72,18 @@ public:
     /// Starts a streamed Diff; the returned object emits text chunks.
     DaemonDiff *diff(const QString &root, const DiffRequestData &request);
 
+    /// Starts a streamed branch Switch (materializes the target head).
+    DaemonOperation *switchBranch(const QString &root, const QString &branch);
+
+    /// Starts a streamed Merge of `sourceBranch` into the root's branch. When
+    /// `abort` is set the in-progress merge is abandoned instead.
+    DaemonOperation *merge(const QString &root,
+                           const QString &sourceBranch,
+                           bool abort,
+                           bool ffOnly,
+                           bool noFf,
+                           const QString &message);
+
     /// Numeric dotted version comparison (-1, 0, 1); tolerates a leading "v".
     static int compareVersions(const QString &a, const QString &b);
 
@@ -90,9 +102,13 @@ public slots:
                         const QString &startCommitId,
                         int limit);
     void fetchCommit(const QString &root, const QString &commitId);
+    void fetchCommitWalk(const QString &root, const QString &startCommitId, int limit);
     void fetchLocks(const QString &root);
     void lockFile(const QString &root, const QString &path, const QString &branch);
     void unlockFile(const QString &root, const QString &path, const QString &branch);
+    void fetchBranches(const QString &root);
+    void createBranch(const QString &root, const QString &name, const QString &fromBranch);
+    void deleteBranch(const QString &root, const QString &name);
 
 signals:
     void stateChanged(DaemonChannel::State state, const QString &detail);
@@ -125,6 +141,13 @@ signals:
     void locksFetched(bool ok, const QString &root, const QList<FileLockInfo> &locks, const QString &error);
     void fileLocked(bool ok, const QString &root, const FileLockInfo &lock, const QString &error);
     void fileUnlocked(bool ok, const QString &root, const QString &path, const QString &error);
+    void branchesFetched(bool ok, const QString &root, const QList<BranchInfo> &branches, const QString &error);
+    void branchCreated(bool ok, const QString &root, const BranchInfo &branch, const QString &error);
+    void branchDeleted(bool ok, const QString &root, const QString &name, const QString &error);
+    void commitWalkFetched(bool ok,
+                           const QString &root,
+                           const QList<CommitInfo> &commits,
+                           const QString &error);
 
 private:
     void tryConnect();

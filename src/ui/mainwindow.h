@@ -21,13 +21,17 @@ class QTabWidget;
 class QTreeView;
 
 class CommitLogModel;
+class BranchModel;
+class BranchService;
 class DaemonOperation;
 class DiffView;
+class GraphService;
 class HistoryService;
 class LockService;
 class LocksModel;
 class RepositoryService;
 class RepositoryTreeModel;
+class RevisionGraphModel;
 class StatusModel;
 class StatusService;
 
@@ -75,6 +79,13 @@ private slots:
     void onCommitTreeDoubleClicked(const QModelIndex &index);
     void onLocksChanged(const QList<FileLockInfo> &locks);
     void onLockSelectionChanged();
+    void onBranchesChanged(const QList<BranchInfo> &branches);
+    void onGraphChanged(const QList<CommitInfo> &commits);
+    void onBranchSelectionChanged();
+    void promptCreateBranch();
+    void switchSelectedBranch();
+    void deleteSelectedBranch();
+    void promptMerge();
     void diffSelectedPending();
     void diffCommit();
     void refreshDiff();
@@ -87,13 +98,20 @@ private:
     void buildActions();
     QWidget *buildPendingPanel();
     QWidget *buildHistoryPage();
+    QWidget *buildBranchesPage();
+    QWidget *buildGraphPage();
     QWidget *buildDiffPage();
     QWidget *buildLocksPage();
     void appendLog(const QString &message);
     void updateBranchLabel(const StatusSnapshot &snapshot);
     void updateCategoryFilter();
     void selectActiveRepositoryItem();
-    void runOperation(DaemonOperation *operation, const QString &title);
+    bool runOperation(DaemonOperation *operation,
+                      const QString &title,
+                      OperationResult *result = nullptr);
+    void refreshWorkspace();
+    void handleMergeConflicts(const QString &sourceBranch, const QStringList &conflicts);
+    BranchInfo selectedBranch() const;
     QStringList selectedStatusPaths() const;
     bool selectedStatusStaged() const;
     bool confirmLockedPaths(const QStringList &paths, const QString &action);
@@ -105,15 +123,21 @@ private:
     StatusService *status_ = nullptr;
     HistoryService *history_ = nullptr;
     LockService *locks_ = nullptr;
+    BranchService *branches_ = nullptr;
+    GraphService *graph_ = nullptr;
 
     StatusModel *statusModel_ = nullptr;
     RepositoryTreeModel *treeModel_ = nullptr;
     CommitLogModel *commitLogModel_ = nullptr;
     RepositoryTreeModel *commitTreeModel_ = nullptr;
     LocksModel *locksModel_ = nullptr;
+    BranchModel *branchModel_ = nullptr;
+    RevisionGraphModel *graphModel_ = nullptr;
 
     QTabWidget *centralTabs_ = nullptr;
     QWidget *historyPage_ = nullptr;
+    QWidget *branchesPage_ = nullptr;
+    QWidget *graphPage_ = nullptr;
     QWidget *diffPage_ = nullptr;
     QWidget *locksPage_ = nullptr;
 
@@ -146,6 +170,15 @@ private:
     QPushButton *refreshLocksButton_ = nullptr;
     QPushButton *unlockButton_ = nullptr;
 
+    QTableView *branchesTable_ = nullptr;
+    QPushButton *newBranchButton_ = nullptr;
+    QPushButton *switchBranchButton_ = nullptr;
+    QPushButton *deleteBranchButton_ = nullptr;
+    QPushButton *refreshBranchesButton_ = nullptr;
+
+    QTableView *graphTable_ = nullptr;
+    QPushButton *refreshGraphButton_ = nullptr;
+
     QAction *openRepositoryAction_ = nullptr;
     QAction *closeRepositoryAction_ = nullptr;
     QAction *refreshAction_ = nullptr;
@@ -157,6 +190,7 @@ private:
     QAction *submitAction_ = nullptr;
     QAction *updateAction_ = nullptr;
     QAction *diffAction_ = nullptr;
+    QAction *mergeAction_ = nullptr;
 
     DaemonDiff *currentDiff_ = nullptr;
     DiffRequestData lastDiffRequest_;

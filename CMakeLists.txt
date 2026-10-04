@@ -44,14 +44,22 @@ add_library(nipa-gui-core STATIC
     src/daemon/daemonoperation.cpp
     src/daemon/daemonoperation.h
     src/daemon/daemontypes.h
+    src/models/branchmodel.cpp
+    src/models/branchmodel.h
     src/models/commitlogmodel.cpp
     src/models/commitlogmodel.h
     src/models/locksmodel.cpp
     src/models/locksmodel.h
     src/models/repositorytreemodel.cpp
     src/models/repositorytreemodel.h
+    src/models/revisiongraphmodel.cpp
+    src/models/revisiongraphmodel.h
     src/models/statusmodel.cpp
     src/models/statusmodel.h
+    src/services/branchservice.cpp
+    src/services/branchservice.h
+    src/services/graphservice.cpp
+    src/services/graphservice.h
     src/services/historyservice.cpp
     src/services/historyservice.h
     src/services/lockservice.cpp
@@ -62,6 +70,8 @@ add_library(nipa-gui-core STATIC
     src/services/statusservice.h
     src/ui/diffview.cpp
     src/ui/diffview.h
+    src/ui/branchdialogs.cpp
+    src/ui/branchdialogs.h
     src/ui/mainwindow.cpp
     src/ui/mainwindow.h
     src/ui/operationprogressdialog.cpp

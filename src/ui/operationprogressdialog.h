@@ -25,6 +25,7 @@ public:
     bool wasCancelled() const;
     QString errorMessage() const;
     QString resultSummary() const;
+    OperationResult result() const;
 
 private:
     void onQueued(int operationsAhead);
@@ -44,4 +45,5 @@ private:
     bool cancelled_ = false;
     QString errorMessage_;
     QString resultSummary_;
+    OperationResult result_;
 };

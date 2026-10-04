@@ -24,6 +24,14 @@ add_executable(locksmodel_test locksmodel_test.cpp)
 target_link_libraries(locksmodel_test PRIVATE nipa-gui-core Qt6::Test)
 add_test(NAME locksmodel_test COMMAND locksmodel_test)
 
+add_executable(branchmodel_test branchmodel_test.cpp)
+target_link_libraries(branchmodel_test PRIVATE nipa-gui-core Qt6::Test)
+add_test(NAME branchmodel_test COMMAND branchmodel_test)
+
+add_executable(revisiongraphmodel_test revisiongraphmodel_test.cpp)
+target_link_libraries(revisiongraphmodel_test PRIVATE nipa-gui-core Qt6::Test)
+add_test(NAME revisiongraphmodel_test COMMAND revisiongraphmodel_test)
+
 add_executable(mainwindow_test mainwindow_test.cpp)
 target_link_libraries(mainwindow_test PRIVATE nipa-gui-core Qt6::Test)
 add_test(NAME mainwindow_test COMMAND mainwindow_test)

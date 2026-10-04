@@ -24,6 +24,7 @@ private slots:
     void stagesSelectedPendingFiles();
     void showsHistoryAndLocks();
     void diffsSelectedPendingFile();
+    void showsBranchesAndGraph();
 };
 
 void MainWindowTest::showsDisconnectedStatus()
@@ -330,6 +331,73 @@ void MainWindowTest::diffsSelectedPendingFile()
     QVERIFY(refreshed.staged());
     QVERIFY(refreshed.ignore_all_space());
     QCOMPARE(refreshed.context(), 5);
+}
+
+void MainWindowTest::showsBranchesAndGraph()
+{
+    FakeDaemon daemon;
+    nipadaemon::RepoInfo repo;
+    repo.set_root("/work/assets");
+    repo.set_branch("main");
+    daemon.service().repos.push_back(repo);
+    daemon.service().watchedRepos["/work/assets"] = repo;
+
+    nipadaemon::StatusResponse status;
+    status.set_branch("main");
+    daemon.service().statuses["/work/assets"] = status;
+
+    greet::GetListBranchResponse list;
+    auto *mainBranch = list.add_branches();
+    mainBranch->set_id("b1");
+    mainBranch->set_name("main");
+    mainBranch->set_commit_id("c1");
+    mainBranch->set_is_default(true);
+    auto *feature = list.add_branches();
+    feature->set_id("b2");
+    feature->set_name("feature/x");
+    feature->set_commit_id("c2");
+    daemon.service().branchLists["/work/assets"] = list;
+
+    greet::WalkCommitsResponse walk;
+    auto *head = walk.add_commits();
+    head->set_commit_id("c1");
+    head->set_parent_1_id("c0");
+    head->set_message("head commit");
+    head->mutable_created_at()->set_seconds(1700003600);
+    auto *parent = walk.add_commits();
+    parent->set_commit_id("c0");
+    parent->set_message("root commit");
+    daemon.service().commitWalks["/work/assets"] = walk;
+
+    QTemporaryDir tmp;
+    QVERIFY(tmp.isValid());
+    const QString configPath = tmp.path() + QStringLiteral("/nipa/daemon.json");
+    QVERIFY(!writeDaemonFile(configPath, daemon.port(), QStringLiteral("token")).isEmpty());
+
+    MainWindow window(nullptr, configPath, false);
+    auto *connection = window.findChild<QLabel *>(QStringLiteral("connectionLabel"));
+    QTRY_VERIFY_WITH_TIMEOUT(connection->text().contains(QStringLiteral("9.9.9")), 10000);
+    window.openRepository(QStringLiteral("/work/assets"));
+
+    auto *branchesTable = window.findChild<QTableView *>(QStringLiteral("branchesTable"));
+    QVERIFY(branchesTable != nullptr);
+    QTRY_COMPARE(branchesTable->model()->rowCount(), 2);
+
+    auto *switchButton = window.findChild<QPushButton *>(QStringLiteral("switchBranchButton"));
+    QVERIFY(switchButton != nullptr);
+    // The active branch is selected and cannot be switched to itself.
+    QVERIFY(!switchButton->isEnabled());
+    branchesTable->selectRow(1);
+    QTRY_VERIFY(switchButton->isEnabled());
+
+    auto *graphTable = window.findChild<QTableView *>(QStringLiteral("graphTable"));
+    QVERIFY(graphTable != nullptr);
+    QTRY_COMPARE(graphTable->model()->rowCount(), 2);
+    QVERIFY(graphTable->model()->index(0, 0).data().toString().contains(QChar(0x25CF)));
+
+    auto *mergeAction = window.findChild<QAction *>(QStringLiteral("mergeAction"));
+    QVERIFY(mergeAction != nullptr);
+    QTRY_VERIFY(mergeAction->isEnabled());
 }
 
 QTEST_MAIN(MainWindowTest)

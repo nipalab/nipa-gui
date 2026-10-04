@@ -1,12 +1,17 @@
 #include "mainwindow.h"
 
+#include "branchdialogs.h"
 #include "daemon/daemonoperation.h"
 #include "diffview.h"
+#include "models/branchmodel.h"
 #include "models/commitlogmodel.h"
 #include "models/locksmodel.h"
 #include "models/repositorytreemodel.h"
+#include "models/revisiongraphmodel.h"
 #include "models/statusmodel.h"
 #include "operationprogressdialog.h"
+#include "services/branchservice.h"
+#include "services/graphservice.h"
 #include "services/historyservice.h"
 #include "services/lockservice.h"
 #include "services/repositoryservice.h"
@@ -55,6 +60,8 @@ MainWindow::MainWindow(QWidget *parent, QString daemonConfigPath, bool autoSpawn
     commitLogModel_ = new CommitLogModel(this);
     commitTreeModel_ = new RepositoryTreeModel(this);
     locksModel_ = new LocksModel(this);
+    branchModel_ = new BranchModel(this);
+    graphModel_ = new RevisionGraphModel(this);
 
     buildUi();
     buildActions();
@@ -65,6 +72,8 @@ MainWindow::MainWindow(QWidget *parent, QString daemonConfigPath, bool autoSpawn
     status_ = new StatusService(channel_, repository_, this);
     history_ = new HistoryService(channel_, repository_, this);
     locks_ = new LockService(channel_, repository_, this);
+    branches_ = new BranchService(channel_, repository_, this);
+    graph_ = new GraphService(channel_, repository_, branches_, this);
 
     connect(channel_, &DaemonChannel::stateChanged, this, &MainWindow::onStateChanged);
     connect(channel_, &DaemonChannel::connected, this, &MainWindow::onConnected);
@@ -104,6 +113,17 @@ MainWindow::MainWindow(QWidget *parent, QString daemonConfigPath, bool autoSpawn
         statusBar()->showMessage(tr("Lock error: %1").arg(message), 5000);
     });
 
+    connect(branches_, &BranchService::branchesChanged, this, &MainWindow::onBranchesChanged);
+    connect(branches_, &BranchService::errorOccurred, this, [this](const QString &message) {
+        appendLog(tr("Branch error: %1").arg(message));
+        statusBar()->showMessage(tr("Branch error: %1").arg(message), 5000);
+    });
+
+    connect(graph_, &GraphService::graphChanged, this, &MainWindow::onGraphChanged);
+    connect(graph_, &GraphService::errorOccurred, this, [this](const QString &message) {
+        appendLog(tr("Graph error: %1").arg(message));
+    });
+
     channel_->start();
 }
 
@@ -118,9 +138,13 @@ void MainWindow::buildUi()
     centralTabs_ = new QTabWidget(this);
     centralTabs_->setObjectName(QStringLiteral("centralTabs"));
     historyPage_ = buildHistoryPage();
+    graphPage_ = buildGraphPage();
+    branchesPage_ = buildBranchesPage();
     diffPage_ = buildDiffPage();
     locksPage_ = buildLocksPage();
     centralTabs_->addTab(historyPage_, tr("History"));
+    centralTabs_->addTab(graphPage_, tr("Graph"));
+    centralTabs_->addTab(branchesPage_, tr("Branches"));
     centralTabs_->addTab(diffPage_, tr("Diff"));
     centralTabs_->addTab(locksPage_, tr("Locks"));
     setCentralWidget(centralTabs_);
@@ -310,6 +334,106 @@ QWidget *MainWindow::buildHistoryPage()
     return page;
 }
 
+QWidget *MainWindow::buildBranchesPage()
+{
+    auto *page = new QWidget(this);
+    auto *layout = new QVBoxLayout(page);
+    layout->setContentsMargins(6, 6, 6, 6);
+
+    auto *toolbar = new QHBoxLayout();
+    newBranchButton_ = new QPushButton(tr("New Branch…"), page);
+    newBranchButton_->setObjectName(QStringLiteral("newBranchButton"));
+    switchBranchButton_ = new QPushButton(tr("Switch"), page);
+    switchBranchButton_->setObjectName(QStringLiteral("switchBranchButton"));
+    switchBranchButton_->setEnabled(false);
+    deleteBranchButton_ = new QPushButton(tr("Delete"), page);
+    deleteBranchButton_->setObjectName(QStringLiteral("deleteBranchButton"));
+    deleteBranchButton_->setEnabled(false);
+    refreshBranchesButton_ = new QPushButton(tr("Refresh"), page);
+    refreshBranchesButton_->setObjectName(QStringLiteral("refreshBranchesButton"));
+    toolbar->addWidget(newBranchButton_);
+    toolbar->addWidget(switchBranchButton_);
+    toolbar->addWidget(deleteBranchButton_);
+    toolbar->addWidget(refreshBranchesButton_);
+    toolbar->addStretch();
+
+    branchesTable_ = new QTableView(page);
+    branchesTable_->setObjectName(QStringLiteral("branchesTable"));
+    branchesTable_->setModel(branchModel_);
+    branchesTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
+    branchesTable_->setSelectionMode(QAbstractItemView::SingleSelection);
+    branchesTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    branchesTable_->setShowGrid(false);
+    branchesTable_->setAlternatingRowColors(true);
+    branchesTable_->verticalHeader()->setVisible(false);
+    branchesTable_->horizontalHeader()->setStretchLastSection(true);
+    branchesTable_->horizontalHeader()->setSectionResizeMode(BranchModel::NameColumn,
+                                                            QHeaderView::ResizeToContents);
+
+    layout->addLayout(toolbar);
+    layout->addWidget(branchesTable_, 1);
+
+    connect(newBranchButton_, &QPushButton::clicked, this, &MainWindow::promptCreateBranch);
+    connect(switchBranchButton_, &QPushButton::clicked, this, &MainWindow::switchSelectedBranch);
+    connect(deleteBranchButton_, &QPushButton::clicked, this, &MainWindow::deleteSelectedBranch);
+    connect(refreshBranchesButton_, &QPushButton::clicked, this, [this] { branches_->refresh(); });
+    connect(branchesTable_, &QTableView::doubleClicked, this,
+            [this](const QModelIndex &) { switchSelectedBranch(); });
+    connect(branchesTable_->selectionModel(), &QItemSelectionModel::selectionChanged, this,
+            &MainWindow::onBranchSelectionChanged);
+    return page;
+}
+
+QWidget *MainWindow::buildGraphPage()
+{
+    auto *page = new QWidget(this);
+    auto *layout = new QVBoxLayout(page);
+    layout->setContentsMargins(6, 6, 6, 6);
+
+    auto *toolbar = new QHBoxLayout();
+    refreshGraphButton_ = new QPushButton(tr("Refresh"), page);
+    refreshGraphButton_->setObjectName(QStringLiteral("refreshGraphButton"));
+    auto *hint = new QLabel(
+        tr("Newest-first walk of both parents from the branch head (max %1 commits)")
+            .arg(GraphService::kGraphLimit),
+        page);
+    toolbar->addWidget(refreshGraphButton_);
+    toolbar->addWidget(hint);
+    toolbar->addStretch();
+
+    graphTable_ = new QTableView(page);
+    graphTable_->setObjectName(QStringLiteral("graphTable"));
+    graphTable_->setModel(graphModel_);
+    graphTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
+    graphTable_->setSelectionMode(QAbstractItemView::SingleSelection);
+    graphTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    graphTable_->setShowGrid(false);
+    graphTable_->setAlternatingRowColors(true);
+    graphTable_->verticalHeader()->setVisible(false);
+    graphTable_->horizontalHeader()->setStretchLastSection(true);
+    graphTable_->horizontalHeader()->setSectionResizeMode(RevisionGraphModel::GraphColumn,
+                                                         QHeaderView::ResizeToContents);
+    graphTable_->horizontalHeader()->setSectionResizeMode(RevisionGraphModel::CommitColumn,
+                                                         QHeaderView::ResizeToContents);
+
+    layout->addLayout(toolbar);
+    layout->addWidget(graphTable_, 1);
+
+    connect(refreshGraphButton_, &QPushButton::clicked, this, [this] { graph_->refresh(); });
+    connect(graphTable_, &QTableView::doubleClicked, this, [this](const QModelIndex &index) {
+        if (!index.isValid()) {
+            return;
+        }
+        const QList<CommitInfo> commits = graphModel_->commits();
+        if (index.row() < 0 || index.row() >= commits.size()) {
+            return;
+        }
+        history_->selectCommit(commits.at(index.row()).id);
+        centralTabs_->setCurrentWidget(historyPage_);
+    });
+    return page;
+}
+
 QWidget *MainWindow::buildDiffPage()
 {
     auto *page = new QWidget(this);
@@ -452,6 +576,10 @@ void MainWindow::buildActions()
     updateAction_->setObjectName(QStringLiteral("updateAction"));
     connect(updateAction_, &QAction::triggered, this, &MainWindow::updateWorkspace);
 
+    mergeAction_ = new QAction(tr("&Merge…"), this);
+    mergeAction_->setObjectName(QStringLiteral("mergeAction"));
+    connect(mergeAction_, &QAction::triggered, this, &MainWindow::promptMerge);
+
     submitAction_ = new QAction(tr("&Submit…"), this);
     submitAction_->setObjectName(QStringLiteral("submitAction"));
     connect(submitAction_, &QAction::triggered, this, &MainWindow::submit);
@@ -471,6 +599,7 @@ void MainWindow::buildActions()
     auto *toolBar = addToolBar(tr("Main"));
     toolBar->setObjectName(QStringLiteral("mainToolBar"));
     toolBar->addAction(updateAction_);
+    toolBar->addAction(mergeAction_);
     toolBar->addAction(submitAction_);
     toolBar->addSeparator();
     toolBar->addAction(stageAction_);
@@ -492,6 +621,7 @@ void MainWindow::buildActions()
 
     auto *actionsMenu = menuBar()->addMenu(tr("&Actions"));
     actionsMenu->addAction(updateAction_);
+    actionsMenu->addAction(mergeAction_);
     actionsMenu->addAction(submitAction_);
     actionsMenu->addSeparator();
     actionsMenu->addAction(stageAction_);
@@ -508,6 +638,7 @@ void MainWindow::buildActions()
     stageAction_->setEnabled(false);
     unstageAction_->setEnabled(false);
     diffAction_->setEnabled(false);
+    mergeAction_->setEnabled(false);
 }
 
 void MainWindow::appendLog(const QString &message)
@@ -572,6 +703,7 @@ void MainWindow::onActiveRepoChanged(const RepoInfo &repo)
         updateAction_->setEnabled(false);
         submitAction_->setEnabled(false);
         diffAction_->setEnabled(false);
+        mergeAction_->setEnabled(false);
         if (currentDiff_ != nullptr) {
             currentDiff_->cancel();
             currentDiff_ = nullptr;
@@ -837,24 +969,35 @@ void MainWindow::updateWorkspace()
     runOperation(channel_->update(repository_->activeRoot()), tr("Update"));
 }
 
-void MainWindow::runOperation(DaemonOperation *operation, const QString &title)
+bool MainWindow::runOperation(DaemonOperation *operation, const QString &title, OperationResult *result)
 {
     OperationProgressDialog dialog(operation, title, this);
     const bool ok = dialog.run();
     if (ok) {
         appendLog(dialog.resultSummary());
         statusBar()->showMessage(dialog.resultSummary(), 5000);
-        status_->refresh(false);
-        repository_->refreshTree();
-        locks_->refresh();
-        return;
+        if (result != nullptr) {
+            *result = dialog.result();
+        }
+        refreshWorkspace();
+        return true;
     }
     if (dialog.wasCancelled()) {
         appendLog(tr("%1 cancelled").arg(title));
-        return;
+        return false;
     }
     appendLog(tr("%1 failed: %2").arg(title, dialog.errorMessage()));
     QMessageBox::warning(this, title, dialog.errorMessage());
+    return false;
+}
+
+void MainWindow::refreshWorkspace()
+{
+    status_->refresh(false);
+    repository_->refreshTree();
+    locks_->refresh();
+    history_->refresh();
+    branches_->refresh();
 }
 
 void MainWindow::showStatusContextMenu(const QPoint &pos)
@@ -1182,6 +1325,150 @@ void MainWindow::showLocksContextMenu(const QPoint &pos)
     unlockEntry->setEnabled(index.isValid());
     if (menu.exec(locksTable_->viewport()->mapToGlobal(pos)) == unlockEntry) {
         unlockSelectedLock();
+    }
+}
+
+void MainWindow::onBranchesChanged(const QList<BranchInfo> &branches)
+{
+    branchModel_->setBranches(branches);
+    const int index = centralTabs_->indexOf(branchesPage_);
+    if (index >= 0) {
+        centralTabs_->setTabText(index, branches.isEmpty() ? tr("Branches")
+                                                           : tr("Branches (%1)").arg(branches.size()));
+    }
+    mergeAction_->setEnabled(!branches.isEmpty() && repository_->hasActiveRepo());
+
+    const int activeRow = branchModel_->rowForName(branches_->activeBranchName());
+    if (activeRow >= 0 && branchesTable_->selectionModel() != nullptr) {
+        branchesTable_->selectRow(activeRow);
+    }
+    onBranchSelectionChanged();
+}
+
+void MainWindow::onGraphChanged(const QList<CommitInfo> &commits)
+{
+    graphModel_->setCommits(commits);
+    const int index = centralTabs_->indexOf(graphPage_);
+    if (index >= 0) {
+        centralTabs_->setTabText(index, commits.isEmpty() ? tr("Graph")
+                                                          : tr("Graph (%1)").arg(commits.size()));
+    }
+}
+
+BranchInfo MainWindow::selectedBranch() const
+{
+    if (branchesTable_->selectionModel() == nullptr) {
+        return {};
+    }
+    const QModelIndexList rows = branchesTable_->selectionModel()->selectedRows();
+    if (rows.isEmpty()) {
+        return {};
+    }
+    return branchModel_->branchAt(rows.first().row());
+}
+
+void MainWindow::onBranchSelectionChanged()
+{
+    const BranchInfo branch = selectedBranch();
+    const bool hasBranch = !branch.name.isEmpty();
+    const bool isActive = hasBranch && branch.name == branches_->activeBranchName();
+    switchBranchButton_->setEnabled(hasBranch && !isActive);
+    deleteBranchButton_->setEnabled(hasBranch && !isActive && !branch.isDefault);
+}
+
+void MainWindow::promptCreateBranch()
+{
+    if (!repository_->hasActiveRepo()) {
+        return;
+    }
+    CreateBranchDialog dialog(branches_->branches(), branches_->activeBranchName(), this);
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+    branches_->create(dialog.branchName(), dialog.fromBranch());
+}
+
+void MainWindow::switchSelectedBranch()
+{
+    const BranchInfo branch = selectedBranch();
+    if (branch.name.isEmpty() || !repository_->hasActiveRepo()
+        || branch.name == branches_->activeBranchName()) {
+        return;
+    }
+    const StatusSnapshot snapshot = status_->snapshot();
+    if (snapshot.total() > 0) {
+        const auto answer = QMessageBox::question(
+            this, tr("Switch Branch"),
+            tr("You have %n pending change(s). Switch to %1 anyway?", "", snapshot.total())
+                .arg(branch.name),
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+        if (answer != QMessageBox::Yes) {
+            return;
+        }
+    }
+    if (runOperation(channel_->switchBranch(repository_->activeRoot(), branch.name),
+                     tr("Switch to %1").arg(branch.name))) {
+        // Re-watch to refresh the cached branch info, then let the dependent
+        // services reload against the new head.
+        repository_->open(repository_->activeRoot());
+    }
+}
+
+void MainWindow::deleteSelectedBranch()
+{
+    const BranchInfo branch = selectedBranch();
+    if (branch.name.isEmpty() || branch.isDefault) {
+        return;
+    }
+    const auto answer = QMessageBox::question(this, tr("Delete Branch"),
+                                              tr("Delete branch %1?").arg(branch.name),
+                                              QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+    if (answer == QMessageBox::Yes) {
+        branches_->remove(branch.name);
+    }
+}
+
+void MainWindow::promptMerge()
+{
+    if (!repository_->hasActiveRepo()) {
+        return;
+    }
+    MergeDialog dialog(branches_->branches(), branches_->activeBranchName(), this);
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+    const QString source = dialog.sourceBranch();
+    if (source.isEmpty()) {
+        return;
+    }
+
+    OperationResult result;
+    if (!runOperation(channel_->merge(repository_->activeRoot(), source, false, dialog.ffOnly(),
+                                      dialog.noFf(), dialog.message()),
+                      tr("Merge %1").arg(source), &result)) {
+        return;
+    }
+    if (!result.merge.conflicts.isEmpty()) {
+        handleMergeConflicts(source, result.merge.conflicts);
+    }
+}
+
+void MainWindow::handleMergeConflicts(const QString &sourceBranch, const QStringList &conflicts)
+{
+    QMessageBox box(this);
+    box.setWindowTitle(tr("Merge Conflicts"));
+    box.setIcon(QMessageBox::Warning);
+    box.setText(tr("The merge left %n conflicted file(s).", "", conflicts.size()));
+    box.setInformativeText(
+        tr("Resolve them in your tools, then stage and submit. Or abort the merge."));
+    box.setDetailedText(conflicts.join(QLatin1Char('\n')));
+    QPushButton *abortButton = box.addButton(tr("Abort Merge"), QMessageBox::DestructiveRole);
+    box.addButton(tr("Keep Conflicts"), QMessageBox::AcceptRole);
+    box.exec();
+    if (box.clickedButton() == abortButton) {
+        runOperation(channel_->merge(repository_->activeRoot(), sourceBranch, true, false, false,
+                                     QString()),
+                     tr("Abort Merge"));
     }
 }
 

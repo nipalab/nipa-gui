@@ -65,6 +65,10 @@ private slots:
     void diffFailureReportsError();
     void diffCancels();
     void locksRoundTrip();
+    void branchesCrud();
+    void switchOperation();
+    void mergeOperationWithConflicts();
+    void commitWalkParses();
     void reconnectsAfterDaemonAppears();
     void versionComparison();
 };
@@ -668,6 +672,149 @@ void DaemonChannelTest::locksRoundTrip()
     QCOMPARE(unlockSpy.last().at(2).toString(), QStringLiteral("assets/tex.png"));
     QCOMPARE(fixture.daemon->service().unlockRequests.size(), std::size_t(1));
     QCOMPARE(fixture.daemon->service().locks.size(), std::size_t(1));
+}
+
+void DaemonChannelTest::branchesCrud()
+{
+    auto fixture = makeConnectedFixture();
+    QVERIFY(fixture.channel->isConnected());
+
+    greet::GetListBranchResponse list;
+    auto *mainBranch = list.add_branches();
+    mainBranch->set_id("b1");
+    mainBranch->set_name("main");
+    mainBranch->set_commit_id("c1");
+    mainBranch->set_is_default(true);
+    auto *feature = list.add_branches();
+    feature->set_id("b2");
+    feature->set_name("feature");
+    feature->set_is_protected(true);
+    fixture.daemon->service().branchLists["/work/assets"] = list;
+
+    QSignalSpy listSpy(fixture.channel.get(), &DaemonChannel::branchesFetched);
+    fixture.channel->fetchBranches("/work/assets");
+    QTRY_COMPARE(listSpy.count(), 1);
+    QVERIFY(listSpy.last().at(0).toBool());
+
+    const QList<BranchInfo> branches = listSpy.last().at(2).value<QList<BranchInfo>>();
+    QCOMPARE(branches.size(), 2);
+    QCOMPARE(branches.first().name, QStringLiteral("main"));
+    QCOMPARE(branches.first().commitId, QStringLiteral("c1"));
+    QVERIFY(branches.first().isDefault);
+    QVERIFY(branches.at(1).isProtected);
+    QCOMPARE(branches.at(1).commitId, QString());
+
+    QSignalSpy createSpy(fixture.channel.get(), &DaemonChannel::branchCreated);
+    fixture.channel->createBranch("/work/assets", QStringLiteral("feature/new"),
+                                  QStringLiteral("main"));
+    QTRY_COMPARE(createSpy.count(), 1);
+    QVERIFY(createSpy.last().at(0).toBool());
+    const BranchInfo created = createSpy.last().at(2).value<BranchInfo>();
+    QCOMPARE(created.name, QStringLiteral("feature/new"));
+    QCOMPARE(created.commitId, QStringLiteral("c1"));
+    QCOMPARE(fixture.daemon->service().branchCreateRequests.size(), std::size_t(1));
+
+    QSignalSpy deleteSpy(fixture.channel.get(), &DaemonChannel::branchDeleted);
+    fixture.channel->deleteBranch("/work/assets", QStringLiteral("feature"));
+    QTRY_COMPARE(deleteSpy.count(), 1);
+    QVERIFY(deleteSpy.last().at(0).toBool());
+    QCOMPARE(deleteSpy.last().at(2).toString(), QStringLiteral("feature"));
+    QCOMPARE(fixture.daemon->service().branchDeleteRequests.size(), std::size_t(1));
+    QCOMPARE(fixture.daemon->service().branchLists["/work/assets"].branches_size(), 2);
+}
+
+void DaemonChannelTest::switchOperation()
+{
+    auto fixture = makeConnectedFixture();
+    QVERIFY(fixture.channel->isConnected());
+
+    DaemonOperation *operation =
+        fixture.channel->switchBranch("/work/assets", QStringLiteral("feature/x"));
+    QSignalSpy finishedSpy(operation, &DaemonOperation::finished);
+    QTRY_COMPARE(finishedSpy.count(), 1);
+
+    const OperationResult result = finishedSpy.last().at(0).value<OperationResult>();
+    QVERIFY(result.kind == OperationResult::Sync);
+    QCOMPARE(result.sync.branch, QStringLiteral("feature/x"));
+    QCOMPARE(result.sync.commitId, QStringLiteral("switched0001"));
+
+    QCOMPARE(fixture.daemon->service().switchRequests.size(), std::size_t(1));
+    QCOMPARE(QString::fromStdString(fixture.daemon->service().switchRequests[0].branch()),
+             QStringLiteral("feature/x"));
+}
+
+void DaemonChannelTest::mergeOperationWithConflicts()
+{
+    auto fixture = makeConnectedFixture();
+    QVERIFY(fixture.channel->isConnected());
+
+    fixture.daemon->service().mergeCommitted = true;
+    fixture.daemon->service().mergeConflicts = {"assets/a.png", "assets/b.png"};
+
+    DaemonOperation *operation = fixture.channel->merge(
+        "/work/assets", QStringLiteral("feature/x"), false, false, true, QStringLiteral("merge it"));
+    QSignalSpy finishedSpy(operation, &DaemonOperation::finished);
+    QTRY_COMPARE(finishedSpy.count(), 1);
+
+    const OperationResult result = finishedSpy.last().at(0).value<OperationResult>();
+    QVERIFY(result.kind == OperationResult::Merge);
+    QVERIFY(result.merge.mergeCommitted);
+    QCOMPARE(result.merge.conflicts.size(), 2);
+    QCOMPARE(result.merge.conflicts.first(), QStringLiteral("assets/a.png"));
+
+    QCOMPARE(fixture.daemon->service().mergeRequests.size(), std::size_t(1));
+    const nipadaemon::MergeOpRequest &sent = fixture.daemon->service().mergeRequests[0];
+    QCOMPARE(QString::fromStdString(sent.source_branch()), QStringLiteral("feature/x"));
+    QVERIFY(sent.no_ff());
+    QVERIFY(!sent.ff_only());
+    QCOMPARE(QString::fromStdString(sent.message()), QStringLiteral("merge it"));
+
+    fixture.daemon->service().mergeConflicts.clear();
+    DaemonOperation *abortOperation = fixture.channel->merge(
+        "/work/assets", QStringLiteral("feature/x"), true, false, false, QString());
+    QSignalSpy abortSpy(abortOperation, &DaemonOperation::finished);
+    QTRY_COMPARE(abortSpy.count(), 1);
+    const OperationResult abortResult = abortSpy.last().at(0).value<OperationResult>();
+    QVERIFY(abortResult.merge.aborted);
+    QCOMPARE(fixture.daemon->service().mergeRequests.size(), std::size_t(2));
+    QVERIFY(fixture.daemon->service().mergeRequests[1].abort());
+}
+
+void DaemonChannelTest::commitWalkParses()
+{
+    auto fixture = makeConnectedFixture();
+    QVERIFY(fixture.channel->isConnected());
+
+    greet::WalkCommitsResponse walk;
+    auto *merge = walk.add_commits();
+    merge->set_commit_id("m1");
+    merge->set_parent_1_id("a1");
+    merge->set_parent_2_id("b1");
+    merge->set_message("merge feature");
+    merge->mutable_created_at()->set_seconds(1700003600);
+    auto *first = walk.add_commits();
+    first->set_commit_id("a1");
+    first->set_parent_1_id("base");
+    first->set_message("on main");
+    fixture.daemon->service().commitWalks["/work/assets"] = walk;
+
+    QSignalSpy spy(fixture.channel.get(), &DaemonChannel::commitWalkFetched);
+    fixture.channel->fetchCommitWalk("/work/assets", QStringLiteral("m1"), 200);
+    QTRY_COMPARE(spy.count(), 1);
+    QVERIFY(spy.last().at(0).toBool());
+
+    const QList<CommitInfo> commits = spy.last().at(2).value<QList<CommitInfo>>();
+    QCOMPARE(commits.size(), 2);
+    QCOMPARE(commits.first().id, QStringLiteral("m1"));
+    QCOMPARE(commits.first().parent1, QStringLiteral("a1"));
+    QCOMPARE(commits.first().parent2, QStringLiteral("b1"));
+    QCOMPARE(commits.at(1).parent1, QStringLiteral("base"));
+    QVERIFY(commits.first().createdAt.isValid());
+
+    QCOMPARE(fixture.daemon->service().commitWalkRequests.size(), std::size_t(1));
+    const auto &sent = fixture.daemon->service().commitWalkRequests[0].request();
+    QCOMPARE(QString::fromStdString(sent.start_commit_id()), QStringLiteral("m1"));
+    QCOMPARE(sent.limit(), 200);
 }
 
 void DaemonChannelTest::reconnectsAfterDaemonAppears()

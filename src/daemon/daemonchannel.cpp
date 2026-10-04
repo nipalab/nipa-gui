@@ -152,6 +152,37 @@ FileLockInfo lockFromProto(const greet::FileLockDetail &lock)
     return info;
 }
 
+BranchInfo branchFromProto(const greet::Branch &branch)
+{
+    BranchInfo info;
+    info.id = QString::fromStdString(branch.id());
+    info.name = QString::fromStdString(branch.name());
+    if (branch.has_commit_id()) {
+        info.commitId = QString::fromStdString(branch.commit_id());
+    }
+    info.isProtected = branch.is_protected();
+    info.isDefault = branch.is_default();
+    info.createdAt = timestampFromProto(branch.created_at());
+    info.updatedAt = timestampFromProto(branch.updated_at());
+    return info;
+}
+
+CommitInfo commitWalkFromProto(const greet::CommitWalkEntry &entry)
+{
+    CommitInfo commit;
+    commit.id = QString::fromStdString(entry.commit_id());
+    commit.hash = QString::fromStdString(entry.commit_hash());
+    if (entry.has_parent_1_id()) {
+        commit.parent1 = QString::fromStdString(entry.parent_1_id());
+    }
+    if (entry.has_parent_2_id()) {
+        commit.parent2 = QString::fromStdString(entry.parent_2_id());
+    }
+    commit.message = QString::fromStdString(entry.message());
+    commit.createdAt = timestampFromProto(entry.created_at());
+    return commit;
+}
+
 QList<int> versionSegments(const QString &version)
 {
     QString cleaned = version.trimmed();
@@ -196,6 +227,8 @@ DaemonChannel::DaemonChannel(QString configPath, QObject *parent)
     qRegisterMetaType<FileLockInfo>();
     qRegisterMetaType<QList<FileLockInfo>>();
     qRegisterMetaType<DiffRequestData>();
+    qRegisterMetaType<BranchInfo>();
+    qRegisterMetaType<QList<BranchInfo>>();
 
     spawnPollTimer_.setSingleShot(false);
     spawnPollTimer_.setInterval(kSpawnPollIntervalMs);
@@ -1147,6 +1180,224 @@ void DaemonChannel::unlockFile(const QString &root, const QString &path, const Q
             }
             emit fileUnlocked(outcome->ok, root, path, outcome->error);
         });
+}
+
+void DaemonChannel::fetchBranches(const QString &root)
+{
+    if (!stub_) {
+        emit branchesFetched(false, root, {}, tr("the daemon endpoint is not available"));
+        return;
+    }
+
+    struct Outcome {
+        bool ok = false;
+        QList<BranchInfo> branches;
+        QString error;
+        grpc::StatusCode code = grpc::StatusCode::OK;
+    };
+    auto outcome = std::make_shared<Outcome>();
+    auto stub = stub_;
+    auto endpoint = endpoint_;
+
+    runAsync(
+        [stub, endpoint, outcome, root] {
+            grpc::ClientContext context;
+            addAuthMetadata(&context, endpoint);
+            setDeadline(&context, kQuickRpcTimeoutMs);
+
+            nipadaemon::ProxyBranchListRequest request;
+            request.set_root(root.toStdString());
+            request.mutable_request();
+
+            nipadaemon::ProxyBranchListResponse response;
+            const grpc::Status result = stub->ProxyBranchList(&context, request, &response);
+            outcome->ok = result.ok();
+            outcome->code = result.error_code();
+            if (result.ok()) {
+                for (const auto &branch : response.response().branches()) {
+                    outcome->branches.append(branchFromProto(branch));
+                }
+            } else {
+                outcome->error = rpcErrorText(result);
+            }
+        },
+        [this, outcome, root] {
+            if (!outcome->ok) {
+                reportRpcFailure(outcome->code, outcome->error);
+            }
+            emit branchesFetched(outcome->ok, root, outcome->branches, outcome->error);
+        });
+}
+
+void DaemonChannel::createBranch(const QString &root, const QString &name, const QString &fromBranch)
+{
+    if (!stub_) {
+        emit branchCreated(false, root, {}, tr("the daemon endpoint is not available"));
+        return;
+    }
+
+    struct Outcome {
+        bool ok = false;
+        BranchInfo branch;
+        QString error;
+        grpc::StatusCode code = grpc::StatusCode::OK;
+    };
+    auto outcome = std::make_shared<Outcome>();
+    auto stub = stub_;
+    auto endpoint = endpoint_;
+
+    runAsync(
+        [stub, endpoint, outcome, root, name, fromBranch] {
+            grpc::ClientContext context;
+            addAuthMetadata(&context, endpoint);
+            setDeadline(&context, kQuickRpcTimeoutMs);
+
+            nipadaemon::ProxyBranchCreateRequest request;
+            request.set_root(root.toStdString());
+            auto *inner = request.mutable_request();
+            inner->set_name(name.toStdString());
+            inner->set_from_branch(fromBranch.toStdString());
+
+            nipadaemon::ProxyBranchCreateResponse response;
+            const grpc::Status result = stub->ProxyBranchCreate(&context, request, &response);
+            outcome->ok = result.ok();
+            outcome->code = result.error_code();
+            if (result.ok()) {
+                outcome->branch = branchFromProto(response.response().branch());
+            } else {
+                outcome->error = rpcErrorText(result);
+            }
+        },
+        [this, outcome, root] {
+            if (!outcome->ok) {
+                reportRpcFailure(outcome->code, outcome->error);
+            }
+            emit branchCreated(outcome->ok, root, outcome->branch, outcome->error);
+        });
+}
+
+void DaemonChannel::deleteBranch(const QString &root, const QString &name)
+{
+    if (!stub_) {
+        emit branchDeleted(false, root, name, tr("the daemon endpoint is not available"));
+        return;
+    }
+
+    struct Outcome {
+        bool ok = false;
+        QString error;
+        grpc::StatusCode code = grpc::StatusCode::OK;
+    };
+    auto outcome = std::make_shared<Outcome>();
+    auto stub = stub_;
+    auto endpoint = endpoint_;
+
+    runAsync(
+        [stub, endpoint, outcome, root, name] {
+            grpc::ClientContext context;
+            addAuthMetadata(&context, endpoint);
+            setDeadline(&context, kQuickRpcTimeoutMs);
+
+            nipadaemon::ProxyBranchDeleteRequest request;
+            request.set_root(root.toStdString());
+            request.mutable_request()->set_name(name.toStdString());
+
+            nipadaemon::ProxyBranchDeleteResponse response;
+            const grpc::Status result = stub->ProxyBranchDelete(&context, request, &response);
+            outcome->ok = result.ok();
+            outcome->code = result.error_code();
+            if (!result.ok()) {
+                outcome->error = rpcErrorText(result);
+            }
+        },
+        [this, outcome, root, name] {
+            if (!outcome->ok) {
+                reportRpcFailure(outcome->code, outcome->error);
+            }
+            emit branchDeleted(outcome->ok, root, name, outcome->error);
+        });
+}
+
+void DaemonChannel::fetchCommitWalk(const QString &root, const QString &startCommitId, int limit)
+{
+    if (!stub_) {
+        emit commitWalkFetched(false, root, {}, tr("the daemon endpoint is not available"));
+        return;
+    }
+
+    struct Outcome {
+        bool ok = false;
+        QList<CommitInfo> commits;
+        QString error;
+        grpc::StatusCode code = grpc::StatusCode::OK;
+    };
+    auto outcome = std::make_shared<Outcome>();
+    auto stub = stub_;
+    auto endpoint = endpoint_;
+
+    runAsync(
+        [stub, endpoint, outcome, root, startCommitId, limit] {
+            grpc::ClientContext context;
+            addAuthMetadata(&context, endpoint);
+            setDeadline(&context, kStatusRpcTimeoutMs);
+
+            nipadaemon::ProxyCommitWalkRequest request;
+            request.set_root(root.toStdString());
+            auto *inner = request.mutable_request();
+            inner->set_start_commit_id(startCommitId.toStdString());
+            inner->set_limit(limit);
+
+            nipadaemon::ProxyCommitWalkResponse response;
+            const grpc::Status result = stub->ProxyCommitWalk(&context, request, &response);
+            outcome->ok = result.ok();
+            outcome->code = result.error_code();
+            if (result.ok()) {
+                for (const auto &entry : response.response().commits()) {
+                    outcome->commits.append(commitWalkFromProto(entry));
+                }
+            } else {
+                outcome->error = rpcErrorText(result);
+            }
+        },
+        [this, outcome, root] {
+            if (!outcome->ok) {
+                reportRpcFailure(outcome->code, outcome->error);
+            }
+            emit commitWalkFetched(outcome->ok, root, outcome->commits, outcome->error);
+        });
+}
+
+DaemonOperation *DaemonChannel::switchBranch(const QString &root, const QString &branch)
+{
+    auto stub = stub_;
+    nipadaemon::SwitchRequest request;
+    request.set_root(root.toStdString());
+    request.set_branch(branch.toStdString());
+    return startOperation(DaemonOperation::Kind::Switch,
+                          [stub, request](grpc::ClientContext *context) -> std::unique_ptr<OpReader> {
+                              return std::unique_ptr<OpReader>(stub->Switch(context, request));
+                          });
+}
+
+DaemonOperation *DaemonChannel::merge(const QString &root,
+                                      const QString &sourceBranch,
+                                      bool abort,
+                                      bool ffOnly,
+                                      bool noFf,
+                                      const QString &message)
+{
+    auto stub = stub_;
+    nipadaemon::MergeOpRequest request;
+    request.set_root(root.toStdString());
+    request.set_source_branch(sourceBranch.toStdString());
+    request.set_abort(abort);
+    request.set_ff_only(ffOnly);
+    request.set_no_ff(noFf);
+    request.set_message(message.toStdString());
+    return startOperation(DaemonOperation::Kind::Merge,
+                          [stub, request](grpc::ClientContext *context) -> std::unique_ptr<OpReader> {
+                              return std::unique_ptr<OpReader>(stub->Merge(context, request));
+                          });
 }
 
 DaemonDiff *DaemonChannel::diff(const QString &root, const DiffRequestData &requestData)

@@ -196,6 +196,114 @@ public:
         return grpc::Status::OK;
     }
 
+    grpc::Status ProxyBranchList(grpc::ServerContext *context,
+                                 const nipadaemon::ProxyBranchListRequest *request,
+                                 nipadaemon::ProxyBranchListResponse *response) override
+    {
+        if (auto status = checkAuth(context); !status.ok()) {
+            return status;
+        }
+        branchListRequests.push_back(*request);
+        const auto known = branchLists.find(request->root());
+        if (known != branchLists.end()) {
+            response->mutable_response()->CopyFrom(known->second);
+        }
+        return grpc::Status::OK;
+    }
+
+    grpc::Status ProxyBranchCreate(grpc::ServerContext *context,
+                                   const nipadaemon::ProxyBranchCreateRequest *request,
+                                   nipadaemon::ProxyBranchCreateResponse *response) override
+    {
+        if (auto status = checkAuth(context); !status.ok()) {
+            return status;
+        }
+        branchCreateRequests.push_back(*request);
+        auto &list = branchLists[request->root()];
+        greet::Branch branch;
+        branch.set_id("branch-" + std::to_string(list.branches_size() + 1));
+        branch.set_name(request->request().name());
+        for (const auto &existing : list.branches()) {
+            const bool fromDefault =
+                request->request().from_branch().empty() && existing.is_default();
+            if (existing.name() == request->request().from_branch() || fromDefault) {
+                branch.set_commit_id(existing.commit_id());
+                break;
+            }
+        }
+        list.add_branches()->CopyFrom(branch);
+        response->mutable_response()->mutable_branch()->CopyFrom(branch);
+        return grpc::Status::OK;
+    }
+
+    grpc::Status ProxyBranchDelete(grpc::ServerContext *context,
+                                   const nipadaemon::ProxyBranchDeleteRequest *request,
+                                   nipadaemon::ProxyBranchDeleteResponse *) override
+    {
+        if (auto status = checkAuth(context); !status.ok()) {
+            return status;
+        }
+        branchDeleteRequests.push_back(*request);
+        auto &list = branchLists[request->root()];
+        for (int i = 0; i < list.branches_size(); ++i) {
+            if (list.branches(i).name() == request->request().name()) {
+                list.mutable_branches()->DeleteSubrange(i, 1);
+                break;
+            }
+        }
+        return grpc::Status::OK;
+    }
+
+    grpc::Status ProxyCommitWalk(grpc::ServerContext *context,
+                                 const nipadaemon::ProxyCommitWalkRequest *request,
+                                 nipadaemon::ProxyCommitWalkResponse *response) override
+    {
+        if (auto status = checkAuth(context); !status.ok()) {
+            return status;
+        }
+        commitWalkRequests.push_back(*request);
+        const auto known = commitWalks.find(request->root());
+        if (known != commitWalks.end()) {
+            response->mutable_response()->CopyFrom(known->second);
+        }
+        return grpc::Status::OK;
+    }
+
+    grpc::Status Switch(grpc::ServerContext *context,
+                        const nipadaemon::SwitchRequest *request,
+                        grpc::ServerWriter<nipadaemon::OpEvent> *writer) override
+    {
+        if (auto status = checkAuth(context); !status.ok()) {
+            return status;
+        }
+        switchRequests.push_back(*request);
+        return streamOperation(switchScript, writer, [this, request](nipadaemon::OpEvent *event) {
+            auto *result = event->mutable_result()->mutable_sync();
+            result->set_branch(switchResultBranch.empty() ? request->branch() : switchResultBranch);
+            result->set_commit_id(switchResultCommitId);
+        });
+    }
+
+    grpc::Status Merge(grpc::ServerContext *context,
+                       const nipadaemon::MergeOpRequest *request,
+                       grpc::ServerWriter<nipadaemon::OpEvent> *writer) override
+    {
+        if (auto status = checkAuth(context); !status.ok()) {
+            return status;
+        }
+        mergeRequests.push_back(*request);
+        return streamOperation(mergeScript, writer, [this, request](nipadaemon::OpEvent *event) {
+            auto *result = event->mutable_result()->mutable_merge();
+            result->set_aborted(request->abort());
+            result->set_up_to_date(mergeUpToDate);
+            result->set_fast_forwarded(mergeFastForwarded);
+            result->set_merge_committed(mergeCommitted);
+            for (const std::string &conflict : mergeConflicts) {
+                result->add_conflicts(conflict);
+            }
+        });
+    }
+
     grpc::Status Diff(grpc::ServerContext *context,
                       const nipadaemon::DiffRequest *request,
                       grpc::ServerWriter<nipadaemon::DiffEvent> *writer) override
@@ -328,6 +436,14 @@ public:
     std::vector<nipadaemon::ProxyLockFileRequest> lockRequests;
     std::vector<nipadaemon::ProxyUnlockFileRequest> unlockRequests;
     std::vector<nipadaemon::DiffRequest> diffRequests;
+    std::map<std::string, greet::GetListBranchResponse> branchLists;
+    std::vector<nipadaemon::ProxyBranchListRequest> branchListRequests;
+    std::vector<nipadaemon::ProxyBranchCreateRequest> branchCreateRequests;
+    std::vector<nipadaemon::ProxyBranchDeleteRequest> branchDeleteRequests;
+    std::map<std::string, greet::WalkCommitsResponse> commitWalks;
+    std::vector<nipadaemon::ProxyCommitWalkRequest> commitWalkRequests;
+    std::vector<nipadaemon::SwitchRequest> switchRequests;
+    std::vector<nipadaemon::MergeOpRequest> mergeRequests;
     int listReposCalls = 0;
     int treeRequests = 0;
     int listLocksRequests = 0;
@@ -337,12 +453,20 @@ public:
 
     FakeStreamScript updateScript{.phase = "update"};
     FakeStreamScript pushScript{.phase = "push"};
+    FakeStreamScript switchScript{.phase = "switch"};
+    FakeStreamScript mergeScript{.phase = "merge"};
     FakeDiffScript diffScript;
     std::string updateResultBranch = "main";
     std::string updateResultCommitId = "updated0001";
     std::string pushResultCommitId = "pushed0001";
     std::string pushResultCommitHash = "hash0001";
     std::string pushResultTreeHash = "tree0001";
+    std::string switchResultBranch;
+    std::string switchResultCommitId = "switched0001";
+    bool mergeUpToDate = false;
+    bool mergeFastForwarded = false;
+    bool mergeCommitted = false;
+    std::vector<std::string> mergeConflicts;
 
 private:
     template <typename ResultBuilder>

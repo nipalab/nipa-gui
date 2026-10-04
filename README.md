@@ -38,7 +38,7 @@ cmake --build build
 
 ## Status
 
-Milestones 0–2 are implemented:
+Milestones 0–3 are implemented:
 
 - **Daemon lifecycle** — auto-spawns `nipa serve` when no discovery file
   exists, waits for readiness, reconnects when the daemon disappears, and
@@ -64,9 +64,15 @@ Milestones 0–2 are implemented:
 - **Locks** — binary lock list (scope, holder, acquisition time), lock/unlock
   from the tree and locks tab, and a warning when staging/submitting paths
   someone else has locked.
+- **Branches & merge** — branch table (head, default, protected) with create,
+  delete and streamed switch; merge with fast-forward policy and message, and
+  a conflict flow offering abort or keep-and-resolve.
+- **Revision graph** — newest-first, both-parents walk (`ProxyCommitWalk`) from
+  the branch head rendered as a lane graph (`●│`) with commit, message and
+  date; double-click opens the commit in History.
 
-Next: branch management, switch/merge and the revision graph (M3). The full
-roadmap (merge requests, sparse checkouts, ACLs, P4V parity) is tracked in
+Next: merge requests, revert, sparse-checkout editor and login (M4). The full
+roadmap (ACLs, P4V parity) is tracked in
 [INTEGRATIONS.md](https://github.com/nipalab/nipa/blob/main/docs/INTEGRATIONS.md).
 
 ## License

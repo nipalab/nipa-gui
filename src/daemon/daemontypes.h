@@ -160,3 +160,16 @@ struct DiffRequestData {
 Q_DECLARE_METATYPE(CommitInfo)
 Q_DECLARE_METATYPE(FileLockInfo)
 Q_DECLARE_METATYPE(DiffRequestData)
+
+/// A project branch (`ProxyBranchList`).
+struct BranchInfo {
+    QString id; // base36 snow ID
+    QString name;
+    QString commitId; // head; empty for a branch without commits
+    bool isProtected = false;
+    bool isDefault = false;
+    QDateTime createdAt;
+    QDateTime updatedAt;
+};
+
+Q_DECLARE_METATYPE(BranchInfo)

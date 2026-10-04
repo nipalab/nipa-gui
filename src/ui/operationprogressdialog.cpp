@@ -94,6 +94,11 @@ QString OperationProgressDialog::resultSummary() const
     return resultSummary_;
 }
 
+OperationResult OperationProgressDialog::result() const
+{
+    return result_;
+}
+
 void OperationProgressDialog::onQueued(int operationsAhead)
 {
     phaseLabel_->setText(tr("Queued (%n operation(s) ahead)", "", operationsAhead));
@@ -131,6 +136,7 @@ void OperationProgressDialog::onProgress(const OpProgressInfo &progress)
 void OperationProgressDialog::onFinished(const OperationResult &result)
 {
     success_ = true;
+    result_ = result;
     switch (result.kind) {
     case OperationResult::Sync:
         resultSummary_ = tr("Updated %1 to %2").arg(result.sync.branch, result.sync.commitId);
@@ -139,7 +145,17 @@ void OperationProgressDialog::onFinished(const OperationResult &result)
         resultSummary_ = tr("Submitted %1").arg(result.push.commitId);
         break;
     case OperationResult::Merge:
-        resultSummary_ = tr("Merge completed");
+        if (!result.merge.conflicts.isEmpty()) {
+            resultSummary_ = tr("Merge left %n conflict(s)", "", result.merge.conflicts.size());
+        } else if (result.merge.aborted) {
+            resultSummary_ = tr("Merge aborted");
+        } else if (result.merge.upToDate) {
+            resultSummary_ = tr("Already up to date");
+        } else if (result.merge.fastForwarded) {
+            resultSummary_ = tr("Fast-forwarded");
+        } else {
+            resultSummary_ = tr("Merge committed");
+        }
         break;
     case OperationResult::Revert:
         resultSummary_ = tr("Revert completed");
