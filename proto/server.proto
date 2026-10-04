@@ -1,5 +1,7 @@
-// Synced from github.com/nipalab/nipa@5757e17 (internal/grpc/proto/server.proto).
-// Imported by daemon.proto for the shared request and response types.
+// Synced from github.com/nipalab/nipa@b2dfda1 (internal/grpc/proto/server.proto).
+// Imported by daemon.proto for the shared request and response types; keep the
+// snapshot in sync when the server proto changes and regenerate the C++ stubs
+// through CMake.
 
 syntax = "proto3";
 
@@ -43,6 +45,7 @@ message GetTreeManifestRequest {
     optional string tree_hash = 4;
     bool recursive = 5;
     repeated string paths = 6; // directory prefixes to include; empty = whole tree
+    optional string commit_id = 7; // base36 snow ID; when set, the manifest is built from that commit instead of the branch head
 }
 
 message GetTreeManifestResponse {
@@ -67,8 +70,10 @@ message ChunkRef {
 
 message PresignedChunkUrl {
     string hash = 1; // hex-encoded BLAKE3 hash of data
-    string url = 2; // signed path relative to the server base URL
+    string url = 2; // signed path relative to the server base URL, or an absolute backend URL
     bool already_stored = 3; // content is already stored; skip the transfer
+    string method = 4; // HTTP method for the transfer; empty means PUT
+    map<string, string> form_data = 5; // multipart form fields for POST policy uploads
 }
 
 message GetChunkUploadUrlsRequest {
@@ -213,6 +218,56 @@ message SetBranchProtectionRequest {
 message SetBranchProtectionResponse {
     Branch branch = 1;
 }
+
+message Tag {
+    google.protobuf.Timestamp created_at = 1;
+    google.protobuf.Timestamp updated_at = 2;
+    string id = 3;
+    string name = 4;
+    string commit_id = 5;
+    string message = 6;
+    string user_id = 7;
+}
+
+message CreateTagRequest {
+    ProjectContext context = 1;
+    string name = 2;
+    string from_branch = 3; // branch whose head is tagged; empty to tag the default branch head
+    string from_commit_id = 4; // exact commit to tag (base36 snow ID); takes precedence over from_commit_hash and from_branch
+    string from_commit_hash = 5; // exact commit to tag (hex content hash); takes precedence over from_branch
+    string message = 6;
+}
+
+message CreateTagResponse {
+    Tag tag = 1;
+}
+
+message GetTagByNameRequest {
+    ProjectContext context = 1;
+    string name = 2;
+}
+
+message GetTagByNameResponse {
+    Tag tag = 1;
+}
+
+message ListTagsRequest {
+    ProjectContext context = 1;
+    int32 limit = 2;
+    optional google.protobuf.Timestamp last_created_at = 3;
+    optional string last_id = 4;
+}
+
+message ListTagsResponse {
+    repeated Tag tags = 1;
+}
+
+message DeleteTagRequest {
+    ProjectContext context = 1;
+    string name = 2;
+}
+
+message DeleteTagResponse {}
 
 message GetMergeBaseRequest {
     ProjectContext context = 1;
@@ -812,6 +867,10 @@ service NipaService {
     rpc DeleteBranch(DeleteBranchRequest) returns (DeleteBranchResponse);
     rpc SetDefaultBranch(SetDefaultBranchRequest) returns (SetDefaultBranchResponse);
     rpc SetBranchProtection(SetBranchProtectionRequest) returns (SetBranchProtectionResponse);
+    rpc ListTags(ListTagsRequest) returns (ListTagsResponse);
+    rpc GetTagByName(GetTagByNameRequest) returns (GetTagByNameResponse);
+    rpc CreateTag(CreateTagRequest) returns (CreateTagResponse);
+    rpc DeleteTag(DeleteTagRequest) returns (DeleteTagResponse);
     rpc GetTreeManifest(GetTreeManifestRequest) returns (GetTreeManifestResponse);
     rpc GetCommitLog(GetCommitLogRequest) returns (GetCommitLogResponse);
     rpc GetCommit(GetCommitRequest) returns (GetCommitResponse);

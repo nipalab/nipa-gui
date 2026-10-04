@@ -8,7 +8,7 @@ set(CMAKE_AUTOMOC ON)
 option(NIPA_BUILD_TESTS "Build the unit tests" OFF)
 option(NIPA_COVERAGE "Instrument the sources for gcov coverage" OFF)
 
-find_package(Qt6 REQUIRED COMPONENTS Widgets)
+find_package(Qt6 REQUIRED COMPONENTS Widgets Concurrent)
 find_package(Protobuf REQUIRED)
 find_package(Threads REQUIRED)
 
@@ -35,12 +35,21 @@ endif()
 
 # Application logic lives in a library so that the unit tests can link it.
 add_library(nipa-gui-core STATIC
-    src/daemonconnection.cpp
-    src/daemonconnection.h
-    src/mainwindow.cpp
-    src/mainwindow.h
+    src/daemon/daemonchannel.cpp
+    src/daemon/daemonchannel.h
+    src/daemon/daemonconnection.cpp
+    src/daemon/daemonconnection.h
+    src/daemon/daemontypes.h
+    src/models/statusmodel.cpp
+    src/models/statusmodel.h
+    src/services/statusservice.cpp
+    src/services/statusservice.h
+    src/services/workspaceservice.cpp
+    src/services/workspaceservice.h
+    src/ui/mainwindow.cpp
+    src/ui/mainwindow.h
 )
-target_link_libraries(nipa-gui-core PUBLIC Qt6::Widgets protobuf::libprotobuf ${NIPA_GRPC_LIBS})
+target_link_libraries(nipa-gui-core PUBLIC Qt6::Widgets Qt6::Concurrent protobuf::libprotobuf ${NIPA_GRPC_LIBS})
 target_include_directories(nipa-gui-core PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
     "${CMAKE_CURRENT_BINARY_DIR}"

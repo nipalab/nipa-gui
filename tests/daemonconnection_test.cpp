@@ -1,4 +1,4 @@
-#include "daemonconnection.h"
+#include "daemon/daemonconnection.h"
 
 #include "fakedaemon.h"
 
@@ -13,9 +13,7 @@ private slots:
     void missingConfigReportsError();
     void invalidConfigReportsError();
     void incompleteConfigReportsError();
-    void unreachableDaemonReportsError();
-    void rejectedRequestReportsError();
-    void pingReturnsDaemonStatus();
+    void loadsEndpointFromConfig();
     void defaultConfigPathIsUsed();
 };
 
@@ -24,10 +22,10 @@ void DaemonConnectionTest::missingConfigReportsError()
     QTemporaryDir tmp;
     QVERIFY(tmp.isValid());
 
-    const DaemonConnection connection(tmp.path() + QStringLiteral("/missing/daemon.json"));
-    DaemonStatus status;
+    DaemonConnection connection(tmp.path() + QStringLiteral("/missing/daemon.json"));
+    DaemonEndpoint endpoint;
     QString error;
-    QVERIFY(!connection.ping(&status, &error));
+    QVERIFY(!connection.load(&endpoint, &error));
     QVERIFY(error.contains(QStringLiteral("cannot read")));
 }
 
@@ -42,10 +40,10 @@ void DaemonConnectionTest::invalidConfigReportsError()
     file.write("{ this is not json");
     file.close();
 
-    const DaemonConnection connection(path);
-    DaemonStatus status;
+    DaemonConnection connection(path);
+    DaemonEndpoint endpoint;
     QString error;
-    QVERIFY(!connection.ping(&status, &error));
+    QVERIFY(!connection.load(&endpoint, &error));
     QVERIFY(error.contains(QStringLiteral("invalid daemon record")));
 }
 
@@ -56,71 +54,37 @@ void DaemonConnectionTest::incompleteConfigReportsError()
 
     const QString noPort = tmp.path() + QStringLiteral("/no-port/daemon.json");
     QVERIFY(!writeDaemonFile(noPort, 0, QStringLiteral("secret")).isEmpty());
-    const DaemonConnection noPortConnection(noPort);
-    DaemonStatus status;
+    DaemonConnection noPortConnection(noPort);
+    DaemonEndpoint endpoint;
     QString error;
-    QVERIFY(!noPortConnection.ping(&status, &error));
+    QVERIFY(!noPortConnection.load(&endpoint, &error));
     QVERIFY(error.contains(QStringLiteral("incomplete")));
 
     const QString noToken = tmp.path() + QStringLiteral("/no-token/daemon.json");
     QVERIFY(!writeDaemonFile(noToken, 1, QString()).isEmpty());
-    const DaemonConnection noTokenConnection(noToken);
-    QVERIFY(!noTokenConnection.ping(&status, &error));
+    DaemonConnection noTokenConnection(noToken);
+    QVERIFY(!noTokenConnection.load(&endpoint, &error));
     QVERIFY(error.contains(QStringLiteral("incomplete")));
 }
 
-void DaemonConnectionTest::unreachableDaemonReportsError()
+void DaemonConnectionTest::loadsEndpointFromConfig()
 {
     QTemporaryDir tmp;
     QVERIFY(tmp.isValid());
-
     const QString path = tmp.path() + QStringLiteral("/daemon.json");
-    QVERIFY(!writeDaemonFile(path, 1, QStringLiteral("secret")).isEmpty());
+    QVERIFY(!writeDaemonFile(path, 1234, QStringLiteral("sekret")).isEmpty());
 
-    const DaemonConnection connection(path);
-    DaemonStatus status;
+    DaemonConnection connection(path);
+    QCOMPARE(connection.configPath(), path);
+
+    DaemonEndpoint endpoint;
     QString error;
-    QVERIFY(!connection.ping(&status, &error));
-    QVERIFY(error.contains(QStringLiteral("not answering")));
-}
-
-void DaemonConnectionTest::rejectedRequestReportsError()
-{
-    FakeDaemon daemon;
-    QVERIFY(daemon.port() > 0);
-    daemon.service().requiredToken = "expected";
-
-    QTemporaryDir tmp;
-    QVERIFY(tmp.isValid());
-    const QString path = tmp.path() + QStringLiteral("/daemon.json");
-    QVERIFY(!writeDaemonFile(path, daemon.port(), QStringLiteral("wrong")).isEmpty());
-
-    const DaemonConnection connection(path);
-    DaemonStatus status;
-    QString error;
-    QVERIFY(!connection.ping(&status, &error));
-    QVERIFY(error.contains(QStringLiteral("rejected the request")));
-}
-
-void DaemonConnectionTest::pingReturnsDaemonStatus()
-{
-    FakeDaemon daemon;
-    QVERIFY(daemon.port() > 0);
-
-    QTemporaryDir tmp;
-    QVERIFY(tmp.isValid());
-    const QString path = tmp.path() + QStringLiteral("/daemon.json");
-    QVERIFY(!writeDaemonFile(path, daemon.port(), QStringLiteral("sekret")).isEmpty());
-
-    const DaemonConnection connection(path);
-    DaemonStatus status;
-    QString error;
-    QVERIFY(connection.ping(&status, &error));
-    QVERIFY2(error.isEmpty(), qPrintable(error));
-    QCOMPARE(status.version, QStringLiteral("9.9.9"));
-    QCOMPARE(status.pid, 4242);
-    QCOMPARE(status.endpoint, QStringLiteral("127.0.0.1:") + QString::number(daemon.port()));
-    QCOMPARE(QString::fromStdString(daemon.service().token), QStringLiteral("sekret"));
+    QVERIFY2(connection.load(&endpoint, &error), qPrintable(error));
+    QCOMPARE(endpoint.port, 1234);
+    QCOMPARE(endpoint.token, QStringLiteral("sekret"));
+    QCOMPARE(endpoint.version, QStringLiteral("9.9.9"));
+    QCOMPARE(endpoint.pid, 4242);
+    QCOMPARE(endpoint.address(), QStringLiteral("127.0.0.1:1234"));
 }
 
 void DaemonConnectionTest::defaultConfigPathIsUsed()
@@ -130,10 +94,12 @@ void DaemonConnectionTest::defaultConfigPathIsUsed()
     QVERIFY(tmp.isValid());
     qputenv("XDG_CONFIG_HOME", tmp.path().toUtf8());
 
-    const DaemonConnection connection;
-    DaemonStatus status;
+    DaemonConnection connection;
+    QCOMPARE(connection.configPath(), tmp.path() + QStringLiteral("/nipa/daemon.json"));
+
+    DaemonEndpoint endpoint;
     QString error;
-    QVERIFY(!connection.ping(&status, &error));
+    QVERIFY(!connection.load(&endpoint, &error));
     QVERIFY(error.contains(tmp.path() + QStringLiteral("/nipa/daemon.json")));
 
     qunsetenv("XDG_CONFIG_HOME");

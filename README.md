@@ -38,9 +38,22 @@ cmake --build build
 
 ## Status
 
-Walking skeleton: daemon discovery, token auth and `Ping`. The feature roadmap
-(workspace/depot tree, status, stage/submit, history, locks, merge requests,
-full P4V parity) is tracked in
+Milestone 0 (foundation) is implemented:
+
+- **Daemon lifecycle** — auto-spawns `nipa serve` when no discovery file
+  exists, waits for readiness, reconnects when the daemon disappears, and
+  shuts down only a daemon it started itself.
+- **Async transport** — a persistent gRPC channel with token auth; every call
+  runs off the UI thread and reports back as a Qt signal.
+- **Workspaces** — the daemon's `ListRepos` registry, `WatchRepo`/`UnwatchRepo`
+  for the active working copy.
+- **Pending changes** — a P4V-style status table (staged/modified/untracked/
+  missing/deleted/conflicts, detached-HEAD aware) fed by the daemon's cached
+  `Status`, with category filtering and optional polling.
+
+Next: depot tree, stage/unstage, Submit/Update with progress, history and diff
+(M1–M2). The full roadmap (locks, branches, revision graph, merge requests,
+sparse checkouts, ACLs, P4V parity) is tracked in
 [INTEGRATIONS.md](https://github.com/nipalab/nipa/blob/main/docs/INTEGRATIONS.md).
 
 ## License
